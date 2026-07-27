@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en" class="h-full overflow-x-hidden">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#07090d" />
+    <!-- Inline SVG favicon: no extra request, no 404, no binary asset in the repo. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21s-8.5-5.6-8.5-11A4.7 4.7 0 0 1 12 7a4.7 4.7 0 0 1 8.5 3c0 5.4-8.5 11-8.5 11z' fill='%23e8384f'/%3E%3C/svg%3E"
+    />
+    <meta
+      name="description"
+      content="Real-time single-lead ECG monitor with an anatomically accurate beating 3D heart and synchronised heart sounds."
+    />
+    <title>ECG Heart Visualizer</title>
+  </head>
+
+  <body class="h-full bg-ink-900 text-slate-200 font-display antialiased overflow-x-hidden">
+    <!-- ================= boot overlay ================= -->
+    <div
+      id="boot"
+      class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-5 bg-ink-900 transition-opacity duration-500"
+    >
+      <div class="boot-pulse text-cardiac"></div>
+      <div class="text-center">
+        <p class="text-sm font-medium tracking-[0.25em] text-slate-400 uppercase">
+          ECG Heart Visualizer
+        </p>
+        <p id="boot-status" class="mt-2 font-mono text-xs text-slate-500">
+          Generating cardiac anatomy…
+        </p>
+      </div>
+    </div>
+
+    <div id="app" class="flex min-h-full flex-col">
+      <!-- ================= header ================= -->
+      <header
+        class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-white/5 bg-ink-800/70 px-4 py-2.5 backdrop-blur"
+      >
+        <div class="flex items-center gap-2.5">
+          <span class="relative flex h-2.5 w-2.5">
+            <span
+              id="live-ping"
+              class="absolute inline-flex h-full w-full rounded-full bg-cardiac opacity-60"
+            ></span>
+            <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-cardiac"></span>
+          </span>
+          <h1 class="text-sm font-semibold tracking-wide text-slate-100">
+            ECG&nbsp;HEART&nbsp;VISUALIZER
+          </h1>
+        </div>
+
+        <!-- connection pill -->
+        <div
+          id="status-pill"
+          class="flex items-center gap-2 rounded-full border border-white/10 bg-ink-700 px-3 py-1 font-mono text-[11px]"
+        >
+          <span id="status-dot" class="h-2 w-2 rounded-full bg-slate-500"></span>
+          <span id="status-label" class="text-slate-300">Disconnected</span>
+          <span id="status-detail" class="hidden text-slate-500 sm:inline"></span>
+        </div>
+
+        <div
+          id="leads-off"
+          class="hidden items-center gap-1.5 rounded-full border border-trace-amber/40 bg-trace-amber/10 px-3 py-1 font-mono text-[11px] text-trace-amber"
+        >
+          ⚠ LEADS OFF
+        </div>
+
+        <div class="ml-auto flex items-center gap-2">
+          <button id="btn-start" class="btn btn-primary" disabled>
+            <span id="btn-start-label">Start Monitoring</span>
+          </button>
+          <button id="btn-audio" class="btn btn-ghost" title="Toggle heart sounds">
+            <span id="audio-icon">🔇</span>
+            <span class="hidden sm:inline">Sound</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- ================= main: HEART IS THE HERO ================= -->
+      <main class="grid flex-1 grid-cols-1 gap-3 p-3 lg:grid-cols-[230px_minmax(0,1fr)_270px]">
+        <!-- ---------- left: vitals ---------- -->
+        <aside class="order-2 flex flex-col gap-3 lg:order-1">
+          <div class="panel flex flex-col items-center py-4">
+            <span class="panel-label">Heart Rate</span>
+            <div class="flex items-baseline gap-1.5">
+              <span
+                id="bpm-value"
+                class="font-mono text-6xl font-bold leading-none text-trace-ecg tabular-nums transition-transform duration-100"
+                >--</span
+              >
+              <span class="font-mono text-sm text-slate-500">BPM</span>
+            </div>
+            <span id="bpm-inst" class="mt-1 font-mono text-[11px] text-slate-500">
+              inst —
+            </span>
+            <div class="mt-3 h-1 w-full overflow-hidden rounded bg-ink-600">
+              <div id="bpm-bar" class="h-full w-0 bg-trace-ecg transition-[width] duration-200"></div>
+            </div>
+            <div class="mt-1 flex w-full justify-between font-mono text-[9px] text-slate-600">
+              <span>40</span><span>100</span><span>180</span>
+            </div>
+          </div>
+
+          <div class="panel grid grid-cols-2 gap-y-3 py-3">
+            <div class="stat"><span class="panel-label">Beat #</span><span id="stat-beats">0</span></div>
+            <div class="stat"><span class="panel-label">RR</span><span id="stat-rr">— ms</span></div>
+            <div class="stat"><span class="panel-label">Elapsed</span><span id="stat-elapsed">00:00</span></div>
+            <div class="stat"><span class="panel-label">Samples</span><span id="stat-samples">0</span></div>
+          </div>
+
+          <div class="panel py-3">
+            <span class="panel-label mb-2 block">Recording</span>
+            <div class="flex gap-2">
+              <button id="btn-record" class="btn btn-ghost flex-1">● Record</button>
+              <button id="btn-export" class="btn btn-ghost flex-1" disabled>Export CSV</button>
+            </div>
+            <p id="record-info" class="mt-2 font-mono text-[10px] text-slate-500">
+              Idle — 0 MB
+            </p>
+          </div>
+        </aside>
+
+        <!-- ---------- centre: THE HEART ---------- -->
+        <section
+          class="panel order-1 relative flex min-h-[46vh] items-center justify-center overflow-hidden p-0 lg:order-2 lg:min-h-[54vh]"
+        >
+          <div class="heart-vignette pointer-events-none absolute inset-0 z-0"></div>
+
+          <canvas id="heart-canvas" class="relative z-10 h-full w-full cursor-grab active:cursor-grabbing"></canvas>
+
+          <!-- phase readout -->
+          <div class="pointer-events-none absolute left-4 top-3 z-20 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+            <div>Anterior view · single lead</div>
+            <div id="phase-label" class="mt-0.5 text-trace-ecg">— idle —</div>
+          </div>
+
+          <!-- big centred BPM, ghosted behind the organ -->
+          <div class="pointer-events-none absolute bottom-3 right-4 z-20 text-right">
+            <div id="hero-bpm" class="font-mono text-3xl font-bold leading-none text-slate-100/85 tabular-nums">--</div>
+            <div class="font-mono text-[10px] uppercase tracking-widest text-slate-500">beats / min</div>
+          </div>
+
+          <div class="pointer-events-none absolute bottom-3 left-4 z-20 font-mono text-[10px] text-slate-600">
+            drag to rotate · double-click to reset
+          </div>
+        </section>
+
+        <!-- ---------- right: controls ---------- -->
+        <aside class="order-3 flex flex-col gap-3">
+          <!-- source selection -->
+          <div class="panel py-3">
+            <span class="panel-label mb-2 block">Signal Source</span>
+            <div class="grid grid-cols-2 gap-2">
+              <button id="btn-sim" class="btn btn-ghost">Simulate</button>
+              <button id="btn-serial" class="btn btn-ghost">Arduino</button>
+            </div>
+
+            <div id="serial-panel" class="mt-3 hidden">
+              <div class="flex gap-2">
+                <select id="port-select" class="input flex-1"></select>
+                <button id="btn-refresh-ports" class="btn btn-ghost px-2" title="Rescan ports">⟳</button>
+              </div>
+              <p id="serial-hint" class="mt-2 font-mono text-[10px] leading-relaxed text-slate-500"></p>
+            </div>
+          </div>
+
+          <!-- simulation controls -->
+          <div id="sim-controls" class="panel py-3">
+            <span class="panel-label mb-2 block">Simulation</span>
+
+            <label class="ctl">
+              <span>Heart rate <b id="sim-bpm-val">60</b> BPM</span>
+              <input id="sim-bpm" type="range" min="60" max="120" step="1" value="60" />
+            </label>
+
+            <label class="ctl">
+              <span>Noise <b id="sim-noise-val">15</b>%</span>
+              <input id="sim-noise" type="range" min="0" max="100" step="1" value="15" />
+            </label>
+
+            <label class="flex cursor-pointer items-center gap-2 pt-1 text-xs text-slate-400">
+              <input id="sim-artifacts" type="checkbox" checked class="accent-cardiac" />
+              Motion artifacts
+            </label>
+          </div>
+
+          <!-- audio -->
+          <div class="panel py-3">
+            <span class="panel-label mb-2 block">Heart Sounds</span>
+            <label class="ctl">
+              <span>Volume <b id="vol-val">70</b>%</span>
+              <input id="audio-volume" type="range" min="0" max="100" step="1" value="70" />
+            </label>
+            <label class="ctl">
+              <span>Pitch <b id="pitch-val">1.00</b>×</span>
+              <input id="audio-pitch" type="range" min="60" max="160" step="1" value="100" />
+            </label>
+          </div>
+
+          <!-- display -->
+          <div class="panel py-3">
+            <span class="panel-label mb-2 block">Display</span>
+            <div class="flex flex-wrap gap-1.5">
+              <button class="chip" data-window="2">2 s</button>
+              <button class="chip is-active" data-window="4">4 s</button>
+              <button class="chip" data-window="6">6 s</button>
+            </div>
+            <label class="mt-2 flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+              <input id="show-raw" type="checkbox" checked class="accent-cardiac" /> Raw trace
+            </label>
+            <label class="flex cursor-pointer items-center gap-2 text-xs text-slate-400">
+              <input id="show-filt" type="checkbox" checked class="accent-cardiac" /> Filtered trace
+            </label>
+            <label class="mt-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+              <span>3D quality</span>
+              <select id="quality-select" class="input w-24 py-0.5 text-[11px]">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <p id="perf-info" class="mt-2 font-mono text-[10px] text-slate-600"></p>
+          </div>
+        </aside>
+      </main>
+
+      <!-- ================= waveform, below the heart ================= -->
+      <section class="px-3 pb-3">
+        <div class="panel relative overflow-hidden p-0">
+          <div class="flex items-center justify-between border-b border-white/5 px-3 py-1.5">
+            <div class="flex items-center gap-3 font-mono text-[10px] uppercase tracking-widest text-slate-500">
+              <span>Lead I · ECG</span>
+              <span class="flex items-center gap-1.5">
+                <i class="inline-block h-0.5 w-4 bg-trace-ecg"></i>filtered
+              </span>
+              <span class="flex items-center gap-1.5">
+                <i class="inline-block h-0.5 w-4 bg-trace-raw"></i>raw
+              </span>
+              <span class="flex items-center gap-1.5">
+                <i class="inline-block h-2 w-0.5 bg-trace-amber"></i>R-peak
+              </span>
+            </div>
+            <div id="filter-info" class="font-mono text-[10px] text-slate-600"></div>
+          </div>
+          <canvas id="ecg-canvas" class="block h-[200px] w-full sm:h-[230px]"></canvas>
+        </div>
+      </section>
+
+      <footer class="px-4 pb-3 font-mono text-[10px] leading-relaxed text-slate-600">
+        <span id="footer-source">Simulated AD8232 · Arduino Uno R3 · 1000 Hz</span>
+        <span class="mx-2 text-slate-700">|</span>
+        <span id="footer-hint">Not a medical device. For education and development only.</span>
+      </footer>
+    </div>
+
+    <!-- toast -->
+    <div
+      id="toast"
+      class="pointer-events-none fixed bottom-4 left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 opacity-0 transition-opacity duration-300"
+    >
+      <div id="toast-body" class="rounded-lg border border-white/10 bg-ink-700 px-4 py-2 text-sm shadow-xl"></div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

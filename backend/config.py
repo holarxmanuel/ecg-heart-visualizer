@@ -1,0 +1,111 @@
+"""
+=============================================================================
+ HARDWARE CONFIGURATION  --  THE ONLY FILE YOU NEED TO TOUCH FOR THE AD8232
+=============================================================================
+
+Every value the serial/hardware layer uses lives here. When the AD8232 +
+Arduino Uno R3 arrives, verify the block marked "ARDUINO SERIAL SETTINGS"
+matches the sketch in ../arduino/ecg_ad8232/ and you are done.
+
+See ../instructions.txt for the copy-paste hardware swap guide.
+"""
+
+# ---------------------------------------------------------------------------
+# ACQUISITION (shared by BOTH the simulator and the real hardware)
+# ---------------------------------------------------------------------------
+
+# Samples per second. The Arduino sketch paces analogRead() to this exact rate.
+# If you change it here, change SAMPLE_RATE_HZ in the .ino sketch to match.
+SAMPLE_RATE = 1000
+
+# Arduino Uno R3 ADC characteristics. The AD8232 output pin goes to A0.
+ADC_BITS = 10  # analogRead() returns 0..1023
+ADC_MAX = (1 << ADC_BITS) - 1  # 1023
+ADC_VREF = 5.0  # Uno analog reference in volts (3.3 if you power the board at 3V3)
+
+# AD8232 nominal operating point: output idles near mid-rail.
+# The datasheet-typical instrumentation gain of the AD8232 front end is ~1100,
+# so a 1 mV physiological ECG becomes ~1.1 V at the OUTPUT pin.
+AD8232_BASELINE_V = 1.5  # volts at rest
+AD8232_GAIN = 1100.0  # V/V  (millivolt ECG -> volt output)
+
+# ---------------------------------------------------------------------------
+# ARDUINO SERIAL SETTINGS  (Phase 2 -- real hardware)
+# ---------------------------------------------------------------------------
+
+# Baud rate. MUST match Serial.begin() in the .ino sketch.
+SERIAL_BAUD = 115200
+
+# Set to a fixed port string (e.g. "COM5") to skip auto-detection.
+# Leave as None to auto-detect on every connect.
+SERIAL_PORT = None
+
+# Read timeout in seconds for pyserial.
+SERIAL_TIMEOUT = 1.0
+
+# Substrings matched (case-insensitive) against a port's description /
+# manufacturer when auto-detecting. Covers genuine Unos (ATmega16U2), and the
+# CH340 / CP2102 / FTDI chips found on clones.
+SERIAL_AUTODETECT_HINTS = (
+    "arduino",
+    "ch340",
+    "ch341",
+    "usb-serial",
+    "usb serial",
+    "cp210",
+    "ftdi",
+    "wch",
+    "silicon labs",
+)
+
+# Line protocol emitted by the sketch. Two forms are accepted:
+#   "512\n"        -> just the ADC value
+#   "512,0\n"      -> ADC value, leads-off flag (1 = electrode detached)
+# The parser in ecg/serial_source.py handles both, plus the bare "!" that the
+# reference sketch prints while leads are off.
+SERIAL_LEADS_OFF_TOKEN = "!"
+
+# ---------------------------------------------------------------------------
+# SIGNAL PROCESSING
+# ---------------------------------------------------------------------------
+
+MAINS_HZ = 60.0  # 60 for North America, 50 for EU/Asia. Notch filter target.
+NOTCH_Q = 30.0  # Notch quality factor (narrower = higher Q)
+HIGHPASS_HZ = 0.5  # removes baseline wander / breathing drift
+LOWPASS_HZ = 40.0  # removes EMG + high-frequency hash (diagnostic-band display)
+
+# R-peak detector (Pan-Tompkins style, streaming)
+QRS_BANDPASS = (5.0, 15.0)  # Hz, the band where QRS energy dominates
+QRS_INTEGRATION_MS = 150  # moving-window integrator width
+QRS_REFRACTORY_MS = 200  # physiological floor: no two R-peaks closer than this
+BPM_MIN = 25.0
+BPM_MAX = 240.0
+
+# ---------------------------------------------------------------------------
+# STREAMING / TRANSPORT
+# ---------------------------------------------------------------------------
+
+# How often the server pushes a batch of samples to the browser.
+# 20 ms -> 50 messages/sec of 20 samples each. Keeps end-to-end latency well
+# under the 150 ms budget while staying cheap on CPU.
+BATCH_INTERVAL_MS = 20
+
+HOST = "127.0.0.1"
+PORT = 8000
+
+# Origins allowed to talk to this API (the Vite dev server runs on 3000).
+CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+
+# ---------------------------------------------------------------------------
+# SIMULATOR DEFAULTS
+# ---------------------------------------------------------------------------
+
+SIM_DEFAULT_BPM = 60.0
+SIM_DEFAULT_NOISE = 0.15  # 0.0 = clean lab signal, 1.0 = very noisy
+SIM_DEFAULT_ARTIFACTS = True
+SIM_BREATHING_HZ = 0.25  # ~15 breaths/min

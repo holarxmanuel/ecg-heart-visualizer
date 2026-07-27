@@ -1,0 +1,199 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --------------------------------------------------------------------------
+   Component layer. Small and deliberate: the dashboard has maybe eight
+   repeated shapes, so they live here instead of being copy-pasted as long
+   utility strings across the markup.
+   -------------------------------------------------------------------------- */
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-white/[0.06] bg-ink-800/80 px-3 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset];
+  }
+
+  .panel-label {
+    @apply font-mono text-[10px] uppercase tracking-[0.18em] text-slate-500;
+  }
+
+  .stat {
+    @apply flex flex-col gap-0.5;
+  }
+  .stat > span:last-child {
+    @apply font-mono text-sm text-slate-200 tabular-nums;
+  }
+
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-lg px-3 py-1.5
+           text-xs font-medium transition-colors duration-150
+           disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .btn-primary {
+    @apply bg-cardiac text-white hover:bg-[#f0475c] active:bg-[#d02c42];
+  }
+
+  .btn-ghost {
+    @apply border border-white/10 bg-ink-700 text-slate-300
+           hover:border-white/20 hover:bg-ink-600 hover:text-slate-100;
+  }
+
+  .btn-ghost.is-active {
+    @apply border-cardiac/60 bg-cardiac/15 text-cardiac;
+  }
+
+  .chip {
+    @apply rounded-md border border-white/10 bg-ink-700 px-2 py-1 font-mono text-[11px]
+           text-slate-400 transition-colors hover:text-slate-100;
+  }
+  .chip.is-active {
+    @apply border-trace-ecg/50 bg-trace-ecg/10 text-trace-ecg;
+  }
+
+  .input {
+    @apply rounded-md border border-white/10 bg-ink-700 px-2 py-1 font-mono text-xs
+           text-slate-200 outline-none focus:border-cardiac/60;
+  }
+
+  .ctl {
+    @apply mb-2.5 block;
+  }
+  .ctl > span {
+    @apply mb-1 block text-xs text-slate-400;
+  }
+  .ctl > span b {
+    @apply font-mono text-slate-100;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Range inputs. Tailwind cannot reach the shadow-DOM pseudo-elements, so the
+   slider styling has to be written out longhand.
+   -------------------------------------------------------------------------- */
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: #222c3d;
+  outline: none;
+  cursor: pointer;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #e8384f;
+  border: 2px solid #0b0f16;
+  box-shadow: 0 0 0 1px rgba(232, 56, 79, 0.4);
+  transition: transform 0.12s ease;
+}
+input[type='range']::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+input[type='range']::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #e8384f;
+  border: 2px solid #0b0f16;
+  cursor: pointer;
+}
+
+/* --------------------------------------------------------------------------
+   Heart stage
+   -------------------------------------------------------------------------- */
+
+/* A soft radial pool of light behind the organ so it reads as lit from within
+   the panel rather than floating on a flat rectangle. */
+.heart-vignette {
+  background:
+    radial-gradient(ellipse 60% 55% at 50% 45%, rgba(232, 56, 79, 0.10), transparent 70%),
+    radial-gradient(ellipse 100% 100% at 50% 50%, transparent 55%, rgba(0, 0, 0, 0.55));
+}
+
+/* Flash the panel edge on each detected beat. Driven by a class toggle from
+   JS, with the timing owned by CSS so it costs no JS frames. */
+@keyframes beat-flash {
+  0% {
+    box-shadow: inset 0 0 0 1px rgba(232, 56, 79, 0.55), 0 0 22px rgba(232, 56, 79, 0.18);
+  }
+  100% {
+    box-shadow: inset 0 0 0 1px rgba(232, 56, 79, 0), 0 0 0 rgba(232, 56, 79, 0);
+  }
+}
+.beat-flash {
+  animation: beat-flash 320ms ease-out;
+}
+
+@keyframes bpm-kick {
+  0% { transform: scale(1); }
+  22% { transform: scale(1.09); }
+  100% { transform: scale(1); }
+}
+.bpm-kick {
+  animation: bpm-kick 260ms ease-out;
+}
+
+/* --------------------------------------------------------------------------
+   Boot screen
+   -------------------------------------------------------------------------- */
+
+.boot-pulse {
+  width: 54px;
+  height: 54px;
+  background: currentColor;
+  /* A heart silhouette drawn as a mask, so it needs no image asset. */
+  -webkit-mask: var(--heart-mask) center / contain no-repeat;
+  mask: var(--heart-mask) center / contain no-repeat;
+  animation: boot-beat 1.1s cubic-bezier(0.2, 0.7, 0.3, 1) infinite;
+}
+
+:root {
+  --heart-mask: url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21s-8.5-5.6-8.5-11A4.7 4.7 0 0 1 12 7a4.7 4.7 0 0 1 8.5 3c0 5.4-8.5 11-8.5 11z' fill='%23fff'/%3E%3C/svg%3E");
+}
+
+@keyframes boot-beat {
+  0%, 100% { transform: scale(1); opacity: 0.75; }
+  14% { transform: scale(1.16); opacity: 1; }
+  28% { transform: scale(1.02); opacity: 0.9; }
+  42% { transform: scale(1.09); opacity: 0.95; }
+}
+
+/* --------------------------------------------------------------------------
+   Misc
+   -------------------------------------------------------------------------- */
+
+#live-ping {
+  animation: ping-pulse 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes ping-pulse {
+  75%, 100% { transform: scale(2.2); opacity: 0; }
+}
+#live-ping.is-idle {
+  animation: none;
+  opacity: 0;
+}
+
+canvas {
+  touch-action: none; /* let the heart be dragged on touch without scrolling */
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #0b0f16; }
+::-webkit-scrollbar-thumb { background: #222c3d; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #2e3a4d; }
+
+/* Respect the OS setting. The heart still beats -- that is the data -- but the
+   decorative sway and flashes stop. */
+@media (prefers-reduced-motion: reduce) {
+  .boot-pulse, #live-ping, .beat-flash, .bpm-kick {
+    animation: none !important;
+  }
+}

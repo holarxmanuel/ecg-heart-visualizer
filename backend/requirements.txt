@@ -1,0 +1,16 @@
+# Real-Time ECG Heart Visualizer -- backend dependencies
+# Python 3.12+
+#
+#   py -3.12 -m venv .venv
+#   .venv\Scripts\activate
+#   pip install -r requirements.txt
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+numpy==2.2.1
+scipy==1.15.0
+
+# Phase 2 -- real AD8232 hardware over USB serial.
+# Everything else runs fine without it; the simulator has no serial dependency.
+pyserial==3.5

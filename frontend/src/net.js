@@ -1,0 +1,143 @@
+/**
+ * Backend transport: WebSocket stream + REST control.
+ *
+ * Both go through the Vite proxy, so the browser only ever talks to
+ * localhost:3000. That is deliberate -- when the real AD8232 replaces the
+ * simulator, not one URL in this file changes.
+ *
+ * The socket reconnects with exponential backoff. Restarting the Python server
+ * mid-session should look like a two-second blip in the UI, not a dead page.
+ */
+
+const WS_URL = () => {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${location.host}/ws/ecg`;
+};
+
+export class ECGConnection extends EventTarget {
+  constructor() {
+    super();
+    /** @type {WebSocket|null} */
+    this.ws = null;
+    this.connected = false;
+    this._retry = 0;
+    this._timer = null;
+    this._closedByUs = false;
+    this._pingTimer = null;
+  }
+
+  connect() {
+    this._closedByUs = false;
+    this._open();
+  }
+
+  _open() {
+    clearTimeout(this._timer);
+    try {
+      this.ws = new WebSocket(WS_URL());
+    } catch (err) {
+      this._scheduleRetry();
+      return;
+    }
+
+    this.ws.onopen = () => {
+      this.connected = true;
+      this._retry = 0;
+      this.dispatchEvent(new CustomEvent('open'));
+      // A light keepalive stops intermediate proxies from reaping an idle
+      // socket during a long paused session.
+      clearInterval(this._pingTimer);
+      this._pingTimer = setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 20000);
+    };
+
+    this.ws.onmessage = (ev) => {
+      let msg;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      this.dispatchEvent(new CustomEvent(msg.type || 'message', { detail: msg }));
+    };
+
+    this.ws.onclose = () => {
+      this.connected = false;
+      clearInterval(this._pingTimer);
+      this.dispatchEvent(new CustomEvent('close'));
+      if (!this._closedByUs) this._scheduleRetry();
+    };
+
+    this.ws.onerror = () => {
+      // onclose always follows, so retry scheduling lives there only.
+      this.ws?.close();
+    };
+  }
+
+  _scheduleRetry() {
+    this._retry = Math.min(this._retry + 1, 6);
+    const delay = Math.min(500 * 2 ** (this._retry - 1), 8000);
+    this.dispatchEvent(new CustomEvent('retry', { detail: { delay } }));
+    this._timer = setTimeout(() => this._open(), delay);
+  }
+
+  close() {
+    this._closedByUs = true;
+    clearTimeout(this._timer);
+    clearInterval(this._pingTimer);
+    this.ws?.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// REST control surface
+// ---------------------------------------------------------------------------
+
+async function request(path, options = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  let body = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  if (!res.ok) {
+    const message = body?.error || body?.detail || `HTTP ${res.status}`;
+    const err = new Error(typeof message === 'string' ? message : JSON.stringify(message));
+    err.body = body;
+    throw err;
+  }
+  return body;
+}
+
+export const api = {
+  status: () => request('/api/status'),
+  config: () => request('/api/config'),
+
+  /** List COM ports, best Arduino candidate first. */
+  ports: () => request('/api/ports'),
+
+  /**
+   * THE HARDWARE SWAP.
+   * mode 'simulate' -> synthetic AD8232; 'serial' -> the real board; 'off'.
+   */
+  setSource: (mode, port = null, baud = null) =>
+    request('/api/source', {
+      method: 'POST',
+      body: JSON.stringify({ mode, port, baud }),
+    }),
+
+  setSimulation: (patch) =>
+    request('/api/simulation', { method: 'POST', body: JSON.stringify(patch) }),
+
+  setMonitor: (running) =>
+    request('/api/monitor', { method: 'POST', body: JSON.stringify({ running }) }),
+
+  reset: () => request('/api/reset', { method: 'POST' }),
+};

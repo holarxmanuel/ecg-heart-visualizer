@@ -1,0 +1,165 @@
+===============================================================================
+ HARDWARE SWAP GUIDE
+ Replacing the simulator with a real AD8232 + Arduino Uno R3
+===============================================================================
+
+The app was built so this takes minutes, not a rewrite. The simulator and the
+real board are two implementations of ONE interface (backend/ecg/source.py),
+and both emit the same thing: raw 10-bit ADC counts at 1000 Hz. Filtering,
+R-peak detection, the WebSocket protocol, the 3D heart, the audio and the CSV
+export never learn which one is connected.
+
+There is no code to edit. Follow the checklist.
+
+
+-------------------------------------------------------------------------------
+ STEP 1 -- WIRE THE BOARD
+-------------------------------------------------------------------------------
+
+    AD8232 breakout          Arduino Uno R3
+    ---------------          --------------
+    GND               ---->  GND
+    3.3V              ---->  3.3V        *** 3.3V, NOT 5V. 5V destroys it. ***
+    OUTPUT            ---->  A0
+    LO+               ---->  D10
+    LO-               ---->  D11
+    SDN               ---->  (leave unconnected)
+
+Electrodes, Einthoven's Lead I:
+
+    RED    (+)   left wrist,  or left chest below the collarbone
+    YELLOW (-)   right wrist, or right chest below the collarbone
+    GREEN  (REF) right hip or right ankle -- somewhere bony, away from muscle
+
+Use FRESH gel electrodes. Dried pads are the single most common cause of a
+noisy, wandering trace.
+
+
+-------------------------------------------------------------------------------
+ STEP 2 -- UPLOAD THE SKETCH
+-------------------------------------------------------------------------------
+
+    1. Open  arduino/ecg_ad8232/ecg_ad8232.ino  in the Arduino IDE
+    2. Tools > Board  ->  "Arduino Uno"
+    3. Tools > Port   ->  your COM port (note which one)
+    4. Upload
+    5. CLOSE THE SERIAL MONITOR.
+
+Step 5 is not optional. Windows gives a serial port to one process at a time.
+If the IDE's Serial Monitor is open, Python cannot open the port and you will
+get "Access is denied".
+
+Sanity check before moving on: open the Serial Monitor at 115200 baud. You
+should see a fast stream of numbers, roughly 480-540 when the electrodes are
+attached and you are still. If you see "!" repeating, the AD8232 is reporting
+leads-off -- re-seat the electrodes. Then close the monitor.
+
+
+-------------------------------------------------------------------------------
+ STEP 3 -- CONNECT IN THE APP
+-------------------------------------------------------------------------------
+
+    1. Start the app as usual (see README.md, or run start.ps1)
+    2. Click "Arduino" in the Signal Source panel
+    3. The port list populates; the likely board is preselected and marked
+    4. Click "Arduino" again to connect
+
+That is the entire swap. The graph, the BPM readout, the beating heart and the
+heart sounds all switch to live data with no restart. Click "Simulate" to go
+back at any time.
+
+
+-------------------------------------------------------------------------------
+ STEP 4 (ONLY IF NEEDED) -- CONFIGURATION
+-------------------------------------------------------------------------------
+
+Every hardware setting lives in ONE file: backend/config.py. You should not
+need to touch it, but here is what to change if your setup differs.
+
+* Auto-detection picked the wrong port
+      SERIAL_PORT = "COM5"          # was None
+  Or just choose the right port from the dropdown in the UI -- an explicit
+  choice always overrides auto-detection.
+
+* You are outside North America (50 Hz mains, not 60)
+      MAINS_HZ = 50.0
+  This retunes the notch filter. Leaving it at 60 in a 50 Hz country leaves
+  visible hum on the filtered trace.
+
+* You wired 3.3V to AREF and uncommented USE_EXTERNAL_AREF in the sketch
+      ADC_VREF = 3.3                # was 5.0
+  Getting this wrong does not break anything, but the volts column in the CSV
+  export will be scaled wrong.
+
+* You changed the sample rate in the sketch
+      SAMPLE_RATE = <your value>
+  Must match SAMPLE_RATE_HZ in the .ino. If these disagree, the displayed BPM
+  will be wrong by exactly their ratio.
+
+* Your board is a clone with an unusual USB-serial chip that is not being
+  detected
+      SERIAL_AUTODETECT_HINTS = (..., "your chip name", ...)
+
+Restart the Python server after editing config.py.
+
+
+-------------------------------------------------------------------------------
+ STEP 5 -- IF THE SIGNAL LOOKS BAD
+-------------------------------------------------------------------------------
+
+The simulator is your reference. If the real trace looks nothing like it, the
+problem is physical, not software.
+
+  Flat line, value pinned near 0 or 1023
+      The AD8232 is railed. Usually 5V on the 3.3V pin (check before it dies),
+      or a floating reference electrode.
+
+  Wild swings, no recognisable QRS
+      Motion artifact. Sit still, rest your arms, keep the cable from swinging.
+
+  Thick fuzzy band on the raw trace, clean filtered trace
+      Mains hum. Normal, and exactly what the notch filter is for. Unplug the
+      laptop charger to confirm it shrinks.
+
+  Slow wandering baseline
+      Breathing and electrode drift. The 0.5 Hz high-pass handles it; the raw
+      trace is supposed to look like that.
+
+  BPM reads roughly double the true rate
+      The detector is counting T waves as R waves, which happens when the T
+      wave is unusually tall relative to the QRS. Try swapping the RED and
+      YELLOW electrodes to invert the lead.
+
+  "Port opened but no data arrived in 3 s"
+      Sketch not uploaded, wrong baud, or the Serial Monitor is still open.
+
+  "Access is denied" / "could not open port"
+      Another process owns the port. Close the Arduino IDE entirely.
+
+
+-------------------------------------------------------------------------------
+ WHERE THE SWAP ACTUALLY HAPPENS (for the curious)
+-------------------------------------------------------------------------------
+
+  backend/ecg/source.py         the ECGSource interface both sides implement
+  backend/ecg/simulator.py      SimulatedSource  -- synthetic
+  backend/ecg/serial_source.py  SerialSource     -- the real board
+  backend/main.py               ECGPipeline.select() tears one down, starts
+                                the other. ~20 lines. Everything downstream of
+                                it is shared, and is already proven correct by
+                                the simulator.
+
+  Verify the shared path yourself at any time:
+      cd backend
+      .venv\Scripts\python.exe selftest.py
+
+  That runs the real filter and the real R-peak detector against synthetic
+  signal at ten heart rates and noise levels, and checks the recovered BPM
+  against ground truth. Every check must pass before you go looking for a
+  hardware fault.
+
+===============================================================================
+ Not a medical device. For education and development only.
+ Do not connect any part of this to mains power, and do not use it to make
+ any decision about anyone's health.
+===============================================================================
