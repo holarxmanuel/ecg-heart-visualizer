@@ -272,8 +272,8 @@ const rgb = (hex) => {
 const COLOR = {
   // Fresh myocardium is a deep brownish red -- darker and far less saturated
   // than the "valentine" red people expect. The realism lives in this choice.
-  muscle: rgb(0x8c3229),
-  muscleDeep: rgb(0x4d1613),
+  muscle: rgb(0x71231a),
+  muscleDeep: rgb(0x330e0c),
   // Epicardial fat packs the grooves of every adult heart. Muted rather than
   // cream -- at full brightness it stops reading as tissue and becomes a
   // painted stripe.
@@ -281,9 +281,13 @@ const COLOR = {
   // Great vessels are paler, greyer and less saturated than muscle -- but not
   // white. Tone mapping plus the environment map lift these noticeably, so
   // they are authored darker than they should look.
-  aorta: rgb(0x8a7266),
-  pulmonary: rgb(0x866962),
-  vein: rgb(0x5d5e73), // venae cavae carry a distinctly bluish cast
+  // Great vessels are paler and greyer than muscle, but they are still
+  // tissue. Authored well down from what a photograph suggests because tone
+  // mapping, the environment map and the clearcoat each lift them again --
+  // left brighter they render as white plastic pipes.
+  aorta: rgb(0x4a3830),
+  pulmonary: rgb(0x4a3132),
+  vein: rgb(0x3a3b49), // venae cavae carry a distinctly bluish cast
   coronary: rgb(0x8e2620),
 };
 
@@ -314,7 +318,11 @@ function fatWeight(x, y, z) {
   const nearIvg = ramp(ivgDist, 0.20);
   // Atrial walls are thin enough to look paler than ventricular muscle.
   const atrial = clamp((y - AV_PLANE_Y - 0.02) / 0.20, 0, 1) * 0.26;
-  return clamp(Math.max(nearSulcus * 0.44, nearIvg * 0.30) + atrial * 0.7, 0, 1);
+  // Scaled well down from where it was. Anatomically the fat sits *in* the
+  // grooves; letting it spread across the anterior free wall is what turned it
+  // into a belt drawn round the heart. It should be a change in tissue tone
+  // along the sulci, not a band.
+  return clamp(Math.max(nearSulcus * 0.30, nearIvg * 0.22) + atrial * 0.42, 0, 1);
 }
 
 /** 1 where the ventricles squeeze, 0 at the atria -- drives the vertex shader. */
@@ -348,6 +356,15 @@ function buildBody(detail) {
   const colors = new Float32Array(count * 3);
   // aWeights: x = ventricular contraction, y = atrial contraction, z = vessel
   const weights = new Float32Array(count * 3);
+  // aSurf: x = epicardial fat weight, y = ambient occlusion, z = tissue id
+  //        (0 = myocardium, 0.5 = coronary on muscle, 1 = free great vessel)
+  //
+  // These used to be folded into the vertex colour. They are carried raw now
+  // so the fragment shader can blend them per PIXEL. Blending per vertex and
+  // interpolating is what produced the sawtooth along the fat pad: the ramp
+  // could only ever be as smooth as the mesh, so its edge traced the
+  // triangles. Per pixel there is no topology for it to follow.
+  const surf = new Float32Array(count * 3);
 
   const n = [0, 0, 0];
 
@@ -370,28 +387,15 @@ function buildBody(detail) {
     normals[i * 3 + 2] = n[2];
 
     // --- colour ---------------------------------------------------------
-    const fat = fatWeight(x, y, z);
-    // Depth-of-red variation so the muscle is not a flat plastic tone.
-    const mottle =
-      0.5 +
-      0.5 *
-        Math.sin(x * 21.0 + y * 13.0) *
-        Math.sin(y * 17.0 + z * 11.0) *
-        Math.sin(z * 19.0 + x * 7.0);
+    // Base myocardium only. Fat, occlusion, mottling, fibre striation and the
+    // epicardial veins are all applied per pixel in the fragment shader.
+    colors[i * 3] = COLOR.muscle[0];
+    colors[i * 3 + 1] = COLOR.muscle[1];
+    colors[i * 3 + 2] = COLOR.muscle[2];
 
-    let r = mix(COLOR.muscleDeep[0], COLOR.muscle[0], mottle);
-    let g = mix(COLOR.muscleDeep[1], COLOR.muscle[1], mottle);
-    let b = mix(COLOR.muscleDeep[2], COLOR.muscle[2], mottle);
-
-    r = mix(r, COLOR.fat[0], fat);
-    g = mix(g, COLOR.fat[1], fat);
-    b = mix(b, COLOR.fat[2], fat);
-
-    // Fold baked occlusion straight into vertex colour: one attribute, no
-    // second UV set, no aoMap texture, and it costs the GPU nothing.
-    colors[i * 3] = r * ao;
-    colors[i * 3 + 1] = g * ao;
-    colors[i * 3 + 2] = b * ao;
+    surf[i * 3] = fatWeight(x, y, z);
+    surf[i * 3 + 1] = ao;
+    surf[i * 3 + 2] = 0;
 
     weights[i * 3] = contractionWeight(y);
     weights[i * 3 + 1] = atrialWeight(y);
@@ -403,6 +407,7 @@ function buildBody(detail) {
   geo.setAttribute('normal', new BufferAttribute(normals, 3));
   geo.setAttribute('color', new BufferAttribute(colors, 3));
   geo.setAttribute('aWeights', new BufferAttribute(weights, 3));
+  geo.setAttribute('aSurf', new BufferAttribute(surf, 3));
   geo.setIndex(sphere.getIndex());
   sphere.dispose();
   return geo;
@@ -555,6 +560,8 @@ function buildTube(spec, { snap = false, tubular = 44, radial = 9, lift = 0.007 
   const count = pos.count;
   const colors = new Float32Array(count * 3);
   const weights = new Float32Array(count * 3);
+  // Same surface channels as the body, so one shader covers both.
+  const surf = new Float32Array(count * 3);
 
   const taper = spec.taper || null;
   const color = spec.color || COLOR.coronary;
@@ -594,11 +601,16 @@ function buildTube(spec, { snap = false, tubular = 44, radial = 9, lift = 0.007 
     // Reuse the body's AO bake so vessels darken where they tuck behind the
     // atria. Without it they read as stickers pasted on top of the organ.
     const ao = bakeAO(x, y, z, nrm.getX(i), nrm.getY(i), nrm.getZ(i));
-    const shade = mix(0.68, 1.0, ao);
 
-    colors[i * 3] = color[0] * shade;
-    colors[i * 3 + 1] = color[1] * shade;
-    colors[i * 3 + 2] = color[2] * shade;
+    colors[i * 3] = color[0];
+    colors[i * 3 + 1] = color[1];
+    colors[i * 3 + 2] = color[2];
+
+    // Vessels carry no fat pad; the tissue id keeps the muscle-only detail
+    // (fibre striation, epicardial veins) off them.
+    surf[i * 3] = 0;
+    surf[i * 3 + 1] = ao;
+    surf[i * 3 + 2] = snap ? 0.5 : 1.0;
 
     // Coronaries ride on the myocardium, so they contract with it.
     // Free-standing great vessels only get the arterial pressure pulse.
@@ -610,6 +622,7 @@ function buildTube(spec, { snap = false, tubular = 44, radial = 9, lift = 0.007 
   geo.deleteAttribute('uv');
   geo.setAttribute('color', new BufferAttribute(colors, 3));
   geo.setAttribute('aWeights', new BufferAttribute(weights, 3));
+  geo.setAttribute('aSurf', new BufferAttribute(surf, 3));
   return geo;
 }
 
@@ -630,6 +643,7 @@ function mergeAll(geos) {
   const normal = new Float32Array(vTotal * 3);
   const color = new Float32Array(vTotal * 3);
   const weights = new Float32Array(vTotal * 3);
+  const surf = new Float32Array(vTotal * 3);
   const index = vTotal > 65535 ? new Uint32Array(iTotal) : new Uint16Array(iTotal);
 
   let vOff = 0;
@@ -640,6 +654,7 @@ function mergeAll(geos) {
     normal.set(g.attributes.normal.array, vOff * 3);
     color.set(g.attributes.color.array, vOff * 3);
     weights.set(g.attributes.aWeights.array, vOff * 3);
+    surf.set(g.attributes.aSurf.array, vOff * 3);
 
     if (g.index) {
       const src = g.index.array;
@@ -658,6 +673,7 @@ function mergeAll(geos) {
   merged.setAttribute('normal', new BufferAttribute(normal, 3));
   merged.setAttribute('color', new BufferAttribute(color, 3));
   merged.setAttribute('aWeights', new BufferAttribute(weights, 3));
+  merged.setAttribute('aSurf', new BufferAttribute(surf, 3));
   merged.setIndex(new BufferAttribute(index, 1));
   return merged;
 }

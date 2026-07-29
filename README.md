@@ -4,8 +4,9 @@ A single-lead ECG monitor whose centrepiece is an **anatomically accurate,
 procedurally generated 3D heart** that contracts on every detected R-peak, in
 sync with synthesised heart sounds, above a scrolling ECG waveform.
 
-**Live:** <https://143-198-27-18.nip.io> · **Local:** clone and run, see
-[DEPLOYMENT.md](DEPLOYMENT.md)
+**Live:** `http://143.198.27.18:8000` — and an HTTPS address (needed for USB
+sensors and installing) which the app itself links to; see
+[DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
@@ -29,11 +30,15 @@ sync with synthesised heart sounds, above a scrolling ECG waveform.
 
 ## Access
 
-| | URL | Notes |
+| | URL | Mode toggle |
 |---|---|---|
-| Hosted | `https://143-198-27-18.nip.io` | always on, always current |
-| Installed app | same, then "Install" | works offline after first load |
-| Local clone | `http://localhost:8000` | full features; localhost is a secure context |
+| Hosted (HTTP) | `http://143.198.27.18:8000` | locked Online |
+| Hosted (HTTPS) | see the app's "Get the App" panel | locked Online |
+| Installed app | install from the HTTPS address | **Online / Offline** |
+| Local clone | `http://localhost:8000` | **Online / Offline** |
+
+Installing and USB sensors need a secure (https) origin. `localhost` is exempt,
+which is why a local clone gets everything with no certificate.
 
 ---
 
