@@ -269,27 +269,50 @@ const rgb = (hex) => {
   return [s2l(r), s2l(g), s2l(b)];
 };
 
+/*
+ * Palette: a wet anatomical specimen under studio light.
+ *
+ * Two earlier attempts bracketed this. A dark, brownish cadaver reading was
+ * accurate but looked grim on a near-black dashboard; a bright flat
+ * illustration was legible but plastic. The target sits between them: rich
+ * brick red, clearly lit, and above all *wet* -- the broad glossy highlight is
+ * what makes a real specimen photograph the way it does, more than any colour
+ * choice.
+ *
+ * Vessel colour follows oxygenation, as anatomy demands, but in the muted
+ * slate a real vessel wall shows rather than textbook primaries.
+ */
 const COLOR = {
-  // Fresh myocardium is a deep brownish red -- darker and far less saturated
-  // than the "valentine" red people expect. The realism lives in this choice.
-  muscle: rgb(0x71231a),
-  muscleDeep: rgb(0x330e0c),
-  // Epicardial fat packs the grooves of every adult heart. Muted rather than
-  // cream -- at full brightness it stops reading as tissue and becomes a
-  // painted stripe.
-  fat: rgb(0xb09868),
-  // Great vessels are paler, greyer and less saturated than muscle -- but not
-  // white. Tone mapping plus the environment map lift these noticeably, so
-  // they are authored darker than they should look.
-  // Great vessels are paler and greyer than muscle, but they are still
-  // tissue. Authored well down from what a photograph suggests because tone
-  // mapping, the environment map and the clearcoat each lift them again --
-  // left brighter they render as white plastic pipes.
-  aorta: rgb(0x4a3830),
-  pulmonary: rgb(0x4a3132),
-  vein: rgb(0x3a3b49), // venae cavae carry a distinctly bluish cast
-  coronary: rgb(0x8e2620),
+  // Rich brick red. Bright enough to read against a dark panel, desaturated
+  // enough not to look like a cartoon.
+  muscle: rgb(0x9c3128),
+  muscleDeep: rgb(0x531711),
+
+  // Epicardial fat is prominent on a real heart and the reference shows it
+  // clearly: lobulated cream-yellow deposits packing the grooves. An earlier
+  // version reduced it almost to nothing, which removed one of the strongest
+  // cues that this is tissue and not a moulded shape.
+  fat: rgb(0xc9a469),
+
+  // The aorta is muscular and dark; the pulmonary trunk and the venae cavae
+  // carry deoxygenated blood and show as slate blue-grey. That the pulmonary
+  // ARTERY is blue is the detail that proves the model knows its anatomy.
+  aorta: rgb(0x8f3a30),
+  pulmonary: rgb(0x4d5d78),
+  vein: rgb(0x475872),
+  coronary: rgb(0x9b2c22),
 };
+
+/**
+ * Epicardial fat, linear RGB.
+ *
+ * Exported because the fat is blended per PIXEL in the fragment shader rather
+ * than baked into the vertex colour -- a baked blend can only vary as fast as
+ * the mesh, so its boundary traced the triangles. The shader therefore needs
+ * the colour as a uniform, and it has to come from here so there is still one
+ * definition of it.
+ */
+export const FAT_COLOR_LINEAR = COLOR.fat;
 
 /** How much epicardial fat sits here (0 = bare muscle, 1 = full fat pad). */
 function fatWeight(x, y, z) {
@@ -322,7 +345,11 @@ function fatWeight(x, y, z) {
   // grooves; letting it spread across the anterior free wall is what turned it
   // into a belt drawn round the heart. It should be a change in tissue tone
   // along the sulci, not a band.
-  return clamp(Math.max(nearSulcus * 0.30, nearIvg * 0.22) + atrial * 0.42, 0, 1);
+  // Weighted back up. The reference shows substantial fat packing the AV and
+  // interventricular grooves, and it is one of the strongest cues that this is
+  // tissue rather than a moulded shape -- the previous near-zero setting threw
+  // that away to cure a stripe artifact that belonged to the shader instead.
+  return clamp(Math.max(nearSulcus * 0.62, nearIvg * 0.50) + atrial * 0.30, 0, 1);
 }
 
 /** 1 where the ventricles squeeze, 0 at the atria -- drives the vertex shader. */

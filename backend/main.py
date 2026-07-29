@@ -25,7 +25,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -493,6 +493,30 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def canonical_origin(request: Request, call_next):
+    """
+    Send the bare-IP address to the canonical HTTPS one.
+
+    http://143.198.27.18:8000 works, but it is an insecure origin, so on it the
+    USB sensor and installing the app silently cannot function. Rather than
+    leave a second address that is subtly less capable, anyone arriving there
+    is moved to the one that works.
+
+    Matched on the Host header specifically, NOT on the scheme, because port
+    8000 is also the origin behind Caddy and behind the tunnel -- both of which
+    reach it over plain HTTP on loopback. Redirecting those would send every
+    request round in a loop.
+    """
+    host = request.headers.get("host", "")
+    if host.split(":")[0] == config.PUBLIC_IP:
+        target = f"{config.PUBLIC_ORIGIN}{request.url.path}"
+        if request.url.query:
+            target += f"?{request.url.query}"
+        return RedirectResponse(target, status_code=308)
+    return await call_next(request)
+
+
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
     return {
@@ -567,6 +591,16 @@ async def reset_session() -> dict[str, Any]:
 #: gets a random hostname that changes on restart, so it cannot be a constant.
 TUNNEL_URL_FILE = Path("/var/lib/ecg-tunnel/url")
 
+#: Where Caddy stores the certificates it obtains.
+CADDY_CERT_DIR = Path(
+    "/root/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory"
+)
+
+
+def _has_certificate() -> bool:
+    """True once Caddy holds a certificate for the canonical hostname."""
+    return (CADDY_CERT_DIR / config.PUBLIC_HOST / f"{config.PUBLIC_HOST}.crt").is_file()
+
 
 @app.get("/api/access")
 async def get_access(request: Request) -> dict[str, Any]:
@@ -578,12 +612,19 @@ async def get_access(request: Request) -> dict[str, Any]:
     silently unavailable on an insecure origin. Telling the user "this needs
     https, here is the https link" is far better than a button that fails.
     """
-    secure_url = None
+    # The canonical address, valid whenever Caddy holds a certificate for it.
+    secure_url = config.PUBLIC_ORIGIN if _has_certificate() else None
+
+    # Fallback: a Cloudflare tunnel, used while ports 80/443 were unreachable.
+    # Kept as a documented escape hatch rather than a second advertised link.
+    tunnel_url = None
     if TUNNEL_URL_FILE.is_file():
         try:
-            secure_url = TUNNEL_URL_FILE.read_text(encoding="utf-8").strip() or None
+            tunnel_url = TUNNEL_URL_FILE.read_text(encoding="utf-8").strip() or None
         except OSError:
-            secure_url = None
+            tunnel_url = None
+    if secure_url is None:
+        secure_url = tunnel_url
 
     host = request.headers.get("host", "")
     # Cloudflare terminates TLS at its edge and forwards the original scheme.
@@ -592,7 +633,8 @@ async def get_access(request: Request) -> dict[str, Any]:
 
     return {
         "secure_url": secure_url,
-        "insecure_url": f"http://{config.PUBLIC_IP}:{config.PORT}",
+        "canonical_url": config.PUBLIC_ORIGIN,
+        "tunnel_url": tunnel_url,
         "origin_is_secure": is_secure,
         "host": host,
         "proto": proto,

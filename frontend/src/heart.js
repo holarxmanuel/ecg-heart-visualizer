@@ -31,7 +31,7 @@ import {
 } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
-import { buildHeartGeometry } from './heartGeometry.js';
+import { buildHeartGeometry, FAT_COLOR_LINEAR } from './heartGeometry.js';
 
 // ---------------------------------------------------------------------------
 // Cardiac cycle model
@@ -146,6 +146,7 @@ const FRAGMENT_HEAD = /* glsl */ `
   varying vec3 vRest;
   uniform float uFlush;
   uniform float uDetail;   // 0 disables the expensive detail on weak machines
+  uniform vec3 diffuseColorFat;  // epicardial fat, linear
 
   // Written in the colour stage, read by the roughness and normal stages.
   // Locals would not survive between chunks.
@@ -193,19 +194,36 @@ const FRAGMENT_HEAD = /* glsl */ `
   }
 
   /**
-   * Small epicardial veins.
+   * A branching vessel network over the surface.
    *
-   * The named coronaries are geometry; these are the fine venous network over
-   * the surface between them. Ridged noise gives branching filaments. Kept
-   * thin and only slightly blue -- push either and the heart looks bruised.
+   * Ridged noise is the trick: taking 1 - |n - 0.5| turns the smooth hills of
+   * fbm into sharp crests, and the crest lines of a continuous field naturally
+   * fork and rejoin the way vessels do. Domain-warping the input first stops
+   * them looking like contour lines on a map.
+   *
+   * Two calls with different seeds and scales give the arterial and venous
+   * trees, which in an anatomical illustration are the main thing the eye
+   * reads -- more than the muscle colour itself.
+   *
+   * @param seed  offsets the field, so each network is independent
+   * @param scale larger = finer, more numerous branches
+   * @param width crest width; smaller = thinner vessels
    */
-  float veins(vec3 p) {
-    float n = fbm(p * 2.6 + vec3(11.3, 4.1, 7.7));
+  float vesselNet(vec3 p, vec3 seed, float scale, float width) {
+    vec3 q = p * scale + seed;
+    // Domain warp: bends the branches so they wander over the form instead of
+    // ruling straight across it.
+    q += vec3(fbm(q * 0.6), fbm(q * 0.6 + 5.2), fbm(q * 0.6 + 9.1)) * 1.6;
+    float n = fbm(q);
     float ridge = 1.0 - abs(n - 0.5) * 2.0;
-    // A soft, wide threshold. Sharpen it and the filaments stop reading as
-    // vessels lying under a membrane and start reading as cracks in the
-    // surface -- the heart looks damaged rather than vascular.
-    return smoothstep(0.80, 0.99, ridge);
+
+    // Analytic antialiasing. A thin vessel needs a threshold sharper than a
+    // pixel, and thresholding a noise field that finely makes it break into
+    // dashes wherever a crest runs near-tangent to the surface. Widening the
+    // smoothstep by the field's own screen-space rate of change keeps the
+    // vessel thin while giving its edge exactly one pixel of softness.
+    float aa = max(fwidth(ridge), 1e-4) * 1.2;
+    return smoothstep(1.0 - width - aa, 1.0 - width + aa, ridge);
   }
 `;
 
@@ -221,86 +239,87 @@ const FRAGMENT_BODY = /* glsl */ `
   vec3 p = vRest;
   float detail = uDetail;
 
-  // --- fat pad ------------------------------------------------------------
-  // The boundary is perturbed by noise before being thresholded. Epicardial
-  // fat is lobulated -- it clumps along the grooves in irregular globules --
-  // so a clean ramp is exactly what made it read as a painted stripe. The
-  // noise is what turns an edge into tissue.
-  // Two scales of perturbation, deliberately. The coarse one breaks the pad
-  // into separate deposits along the groove -- without it the fat is a
-  // continuous belt round the heart, which is the least convincing thing on
-  // the model. The fine one gives each deposit a ragged edge.
-  float fatBreak = fbm(p * 2.3 + vec3(3.7, 1.9, 8.2));
-  float fatEdge =
-      fatW * (0.55 + 0.85 * fatBreak)
-    + (fbm(p * 7.0) - 0.5) * 0.34 * detail;
-  // Capped below 1: epicardial fat is a translucent layer with muscle showing
-  // through, so letting it reach full opacity is what makes it look painted on.
-  float fat = smoothstep(0.24, 0.58, fatEdge) * isMuscle * 0.82;
-  float lobule = fbm(p * 13.0) * detail;
-
-  // Muted ochre, well below the cream it looks like in photographs -- tone
-  // mapping and the environment map both lift it from here.
-  // Warm tan. The earlier, darker value turned olive once the environment map
-  // and the tone curve had had their way with it, which read as grime rather
-  // than tissue.
-  vec3 fatCol = vec3(0.1750, 0.1210, 0.0530) * (0.86 + 0.28 * lobule);
-
   // --- myocardium ---------------------------------------------------------
-  // Broad, low-contrast depth variation only. No fibre striation: the
-  // epicardium is a smooth serous membrane over the muscle, so visible
-  // bundles are not just distracting, they are wrong -- and at this scale
-  // they alias into corduroy.
-  float mottle = fbm(p * 3.4);
+  float mottle = fbm(p * 3.2);
   vec3 muscleCol = mix(
-    vec3(0.0175, 0.0042, 0.0034),   // deep, almost black-red in the shadows
+    vec3(0.1000, 0.0180, 0.0140),
     diffuseColor.rgb,
-    0.30 + 0.70 * smoothstep(0.30, 0.78, mottle)
+    0.48 + 0.52 * smoothstep(0.24, 0.80, mottle)
   );
 
-  // Fine granular speckle: the damp, slightly uneven look of epicardium.
-  muscleCol *= 1.0 + (vnoise(p * 34.0) - 0.5) * 0.035 * detail;
+  // Fine granularity, so the surface is not a clean gradient. Subtle: this is
+  // a wet membrane, and overdoing it reads as dust.
+  muscleCol *= 1.0 + (vnoise(p * 28.0) - 0.5) * 0.030 * detail;
 
-  // Epicardial veins, on muscle only.
-  float vein = veins(p) * isMuscle * detail;
-  muscleCol = mix(muscleCol, vec3(0.0290, 0.0115, 0.0180), vein * 0.34);
+  // --- coronary tracery ---------------------------------------------------
+  // The named arteries are geometry. This is the finer branching network that
+  // spreads from them across the free wall -- clearly visible on the reference
+  // and one of the strongest cues that the surface is vascular tissue.
+  //
+  // Red only. The large blue vessels are geometry; a blue network drawn over
+  // the muscle reads as bruising rather than anatomy.
+  // ONE ridged field, not two. Overlaying a second at a different scale seems
+  // like it should add finer branches, but the two crest sets cross each other
+  // constantly and every crossing is a short bright dash -- the surface ends
+  // up looking scratched rather than vascular. Secondary branching has to come
+  // from the field itself, so the octave count in fbm does that job instead.
+  float artery = vesselNet(p, vec3(31.7, 18.4, 2.9), 2.5, 0.075) * isMuscle * detail;
+  float arteryTree = clamp(artery, 0.0, 1.0);
+
+  muscleCol = mix(muscleCol, vec3(0.2100, 0.0180, 0.0130), arteryTree * 0.92);
+
+  // A few deeper vessels showing through from underneath, bluish and diffuse.
+  float subVein = vesselNet(p, vec3(5.5, 22.1, 14.3), 1.9, 0.075) * isMuscle * detail;
+  muscleCol = mix(muscleCol, vec3(0.0620, 0.0250, 0.0330), subVein * 0.28);
+
+  // --- epicardial fat -----------------------------------------------------
+  // Lobulated deposits packing the grooves. Two noise scales: a coarse one
+  // breaks the pad into separate globules so it is not a belt drawn round the
+  // heart, a fine one gives each globule a ragged edge.
+  // The underlying weight is a torus round the AV plane, so left alone the
+  // fat is always a continuous belt drawn round the heart. Breaking it up is
+  // not enough: the modulation has to reach ZERO over long stretches, or every
+  // part of the ring keeps some fat and the belt survives. Hence a smoothstep
+  // that genuinely floors, rather than a scale-and-offset that cannot.
+  float fatBreak = fbm(p * 1.9 + vec3(3.7, 1.9, 8.2));
+  float fatMask = smoothstep(0.38, 0.72, fatBreak);
+  float fatEdge =
+      fatW * fatMask * 1.45
+    + (fbm(p * 6.5) - 0.5) * 0.26 * detail;
+  // Wide threshold band: a narrow one gives the deposit a cut-out edge, and
+  // the boundary between fat and muscle on a real heart is gradual.
+  float fat = smoothstep(0.20, 0.68, fatEdge) * isMuscle * 0.88;
+
+  // Per-globule shading, so the pad has volume instead of being a flat patch.
+  float lobule = fbm(p * 16.0) * detail;
+  vec3 fatCol = diffuseColorFat * (0.74 + 0.46 * lobule);
 
   vec3 tissue = mix(muscleCol, fatCol, fat);
 
-  // Vessels keep their authored colour, with gentle mottling so they are not
-  // flat tubes.
-  vec3 vesselCol = diffuseColor.rgb * (0.88 + 0.22 * fbm(p * 8.0) * detail);
+  // Vessels keep their authored colour with slight variation.
+  vec3 vesselCol = diffuseColor.rgb * (0.90 + 0.20 * fbm(p * 8.0) * detail);
 
   diffuseColor.rgb = mix(tissue, vesselCol, vesselMix);
 
-  // Hold the saturation up in the brightest areas. Left alone, the highlight
-  // pulls the tissue towards white and the muscle reads as glazed ceramic
-  // rather than something wet and red.
+  // Hold saturation up in the highlights: a specular that desaturates towards
+  // white is what turns wet tissue into wet plastic.
   float lum = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
-  diffuseColor.rgb = mix(vec3(lum), diffuseColor.rgb, 1.18);
-  diffuseColor.rgb = max(diffuseColor.rgb, vec3(0.0));
+  diffuseColor.rgb = max(mix(vec3(lum), diffuseColor.rgb, 1.26), vec3(0.0));
 
   // --- occlusion ----------------------------------------------------------
-  // Applied here rather than baked into the vertex colour: a per-vertex
-  // product can only vary as fast as the mesh, and the grooves are finer than
-  // the triangles are. Kept deep -- the creases between the chambers doing
-  // real work is most of what makes this read as a solid organ.
-  float aoShaped = pow(ao, 1.25);
-  diffuseColor.rgb *= mix(0.30, 1.0, aoShaped);
+  // Deep enough that the grooves genuinely separate the chambers -- that
+  // modelling is most of what makes it read as a solid organ -- but with a
+  // floor, so nothing falls to the black that made an earlier version grim.
+  float aoShaped = pow(ao, 1.30);
+  diffuseColor.rgb *= mix(0.32, 1.0, aoShaped);
 
   // --- engorgement --------------------------------------------------------
-  // Chambers full of oxygenated blood read brighter and redder through the
-  // myocardial wall than the same muscle emptied.
-  // Modest on purpose. This runs across the whole ventricular mass, so a
-  // large multiplier does not read as "full of blood", it reads as the tissue
-  // having changed colour -- and at full diastole it turned the muscle
-  // tomato. The cue only has to be perceptible, not literal.
-  vec3 oxy = diffuseColor.rgb * vec3(1.16, 0.95, 0.96) + vec3(0.012, 0.002, 0.004);
+  vec3 oxy = diffuseColor.rgb * vec3(1.18, 0.95, 0.96) + vec3(0.016, 0.002, 0.004);
   diffuseColor.rgb = mix(diffuseColor.rgb, oxy, vBlood * uFlush);
 
   // Carried to the roughness and normal stages below.
   vFat = fat;
-  vVein = vein;
+  vVein = max(arteryTree, subVein * 0.5);
   vAo = aoShaped;
 `;
 
@@ -315,25 +334,18 @@ const FRAGMENT_BODY = /* glsl */ `
 const ROUGHNESS_BODY = /* glsl */ `
   #include <roughnessmap_fragment>
   float isVesselR = clamp(vSurf.z, 0.0, 1.0);
-  // fat -> glossier, vessels -> smoother, creases -> duller (fluid pools and
-  // the surface there is not catching the light the same way).
-  roughnessFactor = mix(roughnessFactor, 0.28, vFat * 0.75);
-  // Waxy, not glossy. Forcing these smooth gave the aorta a hard specular
-  // that blew out to white however dark the albedo was authored -- the
-  // brightness was coming from the highlight, not the colour.
-  roughnessFactor = mix(roughnessFactor, 0.62, smoothstep(0.25, 0.75, isVesselR));
-  roughnessFactor += (1.0 - vAo) * 0.12;
 
-  // Break the gloss up. A constant roughness gives one smooth, even highlight
-  // sliding over the whole organ, which is the strongest "this is CG" cue left
-  // once the colour is right. Real serous membrane is unevenly wet: broad
-  // areas catch the light, others stay dull.
-  //
-  // The frequency matters more than the amount. At a fine scale every
-  // low-roughness speck becomes its own bright specular dot and the heart
-  // looks frosted; only a broad, slow variation reads as wetness.
-  roughnessFactor += (fbm(vRest * 2.2) - 0.5) * 0.20 * uDetail;
-  roughnessFactor = clamp(roughnessFactor, 0.14, 0.95);
+  // Fat is greasy and the brightest thing on the organ; vessel walls are
+  // smooth and waxy; muscle is damp. Creases hold fluid and go duller.
+  roughnessFactor = mix(roughnessFactor, 0.20, vFat * 0.80);
+  roughnessFactor = mix(roughnessFactor, 0.40, smoothstep(0.25, 0.75, isVesselR));
+  roughnessFactor += (1.0 - vAo) * 0.10;
+
+  // Broad, slow variation only. Frequency matters more than amount here: at a
+  // fine scale every low-roughness speck becomes its own specular dot and the
+  // organ looks frosted, which is a mistake this shader has already made once.
+  roughnessFactor += (fbm(vRest * 2.0) - 0.5) * 0.16 * uDetail;
+  roughnessFactor = clamp(roughnessFactor, 0.13, 0.78);
 `;
 
 /**
@@ -441,10 +453,9 @@ export class HeartView {
     );
     renderer.outputColorSpace = SRGBColorSpace;
     renderer.toneMapping = ACESFilmicToneMapping;
-    // Deliberately under 1.0. Muscle is a dark, low-key subject; the tone
-    // curve plus a clearcoat highlight will happily push it to pink if the
-    // exposure is left where a product-render preset would put it.
-    renderer.toneMappingExposure = 0.86;
+    // Above 1.0 now. The subject is a bright, saturated illustration rather
+    // than the dark low-key one this was originally tuned for.
+    renderer.toneMappingExposure = 0.90;
     renderer.shadowMap.enabled = false; // shadow maps are the expensive part
     this.renderer = renderer;
 
@@ -478,22 +489,24 @@ export class HeartView {
     // smooth red shape. Pushing it up and to the side lets the AV groove, the
     // interventricular groove and the bulge of each ventricle cast their own
     // gradients, which is most of what makes it read as anatomy.
-    const key = new DirectionalLight(0xffe6d2, 1.80);
-    key.position.set(4.2, 4.6, 2.6);
+    // A studio setup: strong key high and to the front-left, a cool rim to cut
+    // the silhouette from a near-black panel, and enough fill that the shadow
+    // side stays tissue-coloured rather than dropping to black. The grooves
+    // still model the chambers -- that is what stops the organ reading as one
+    // smooth mass -- but nothing is allowed to go grim.
+    const key = new DirectionalLight(0xfff2e8, 2.00);
+    key.position.set(3.0, 4.4, 4.2);
     scene.add(key);
 
-    // Cool rim, well behind, to lift the silhouette off a near-black panel.
-    const rim = new DirectionalLight(0x7fa6ff, 0.85);
-    rim.position.set(-4.2, 1.6, -3.6);
+    const rim = new DirectionalLight(0xa8c4ff, 1.10);
+    rim.position.set(-4.4, 1.8, -3.0);
     scene.add(rim);
 
-    // A dim, warm bounce from below so the underside of the apex is not a
-    // dead black hole -- there is a diaphragm down there in life.
-    const bounce = new DirectionalLight(0xff8a6a, 0.22);
-    bounce.position.set(-1.0, -3.2, 1.4);
-    scene.add(bounce);
+    const fill = new DirectionalLight(0xffd8c8, 0.48);
+    fill.position.set(-3.2, -0.4, 3.2);
+    scene.add(fill);
 
-    scene.add(new HemisphereLight(0x8fa8cc, 0x180507, 0.18));
+    scene.add(new HemisphereLight(0xc4d8ff, 0x3a1216, 0.24));
 
     // --- the heart --------------------------------------------------------
     const { geometry, stats } = buildHeartGeometry(this.quality);
@@ -505,21 +518,22 @@ export class HeartView {
       // fat comes out greasy, muscle damp and matte, and vessels waxy. A
       // single gloss across the whole organ is the clearest tell that a
       // surface is CG.
-      roughness: 0.58,
+      roughness: 0.34,
       metalness: 0.0,
       // Pericardial surface is wet. Clearcoat is the cheapest convincing way
       // to say that: a thin glossy layer over a rough diffuse base. Kept
       // modest -- a strong clearcoat on a dark subject just reads as varnish.
-      clearcoat: 0.18,
-      clearcoatRoughness: 0.52,
-      envMapIntensity: 0.15,
+      // The single most important value in this material. A real specimen is
+      // covered in a film of fluid, and that broad, sharp clearcoat highlight
+      // is what makes it photograph as tissue rather than as a moulded shape.
+      clearcoat: 0.70,
+      clearcoatRoughness: 0.08,
+      envMapIntensity: 0.42,
       // Muscle is translucent: light entering the wall scatters and leaves
       // reddened. Kept very low -- sheen adds energy on top of everything
       // else, and at any strength it lifts a dark subject into washed-out
       // pink, which is the exact failure this material is trying to avoid.
-      sheen: 0.12,
-      sheenRoughness: 0.85,
-      sheenColor: new Color(0.30, 0.035, 0.030),
+      sheen: 0.0,
     });
 
     this.uniforms = {
@@ -534,6 +548,16 @@ export class HeartView {
       // a usable frame rate and starving the acquisition process, so it is
       // switched off there rather than merely reduced.
       uDetail: { value: this.softwareGL ? 0.0 : 1.0 },
+      // Epicardial fat, in linear space. Passed as a uniform because the
+      // vertex colour now carries only the muscle/vessel base -- the fat is
+      // blended in per pixel so its boundary does not follow the mesh.
+      diffuseColorFat: {
+        value: new Color(
+          FAT_COLOR_LINEAR[0],
+          FAT_COLOR_LINEAR[1],
+          FAT_COLOR_LINEAR[2],
+        ),
+      },
     };
 
     material.onBeforeCompile = (shader) => {
@@ -558,7 +582,7 @@ export class HeartView {
       );
     };
     // Any material whose shader we patch needs its own program cache key.
-    material.customProgramCacheKey = () => 'ecg-heart-v9';
+    material.customProgramCacheKey = () => 'ecg-heart-v14';
 
     const mesh = new Mesh(geometry, material);
     this.mesh = mesh;
