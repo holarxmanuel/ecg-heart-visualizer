@@ -123,25 +123,37 @@ export class UpdateManager extends EventTarget {
   }
 
   /**
-   * Compare the build the server is serving against the one this page loaded.
-   * Catches the case where there is no service worker (insecure context, or an
-   * unsupported browser) but the deployment has moved on.
+   * Has the *frontend* been rebuilt since this page loaded?
+   *
+   * Deliberately reads version.json, which build-sw.mjs writes, rather than
+   * /api/version, which is derived from the git commit. They diverge for good
+   * reasons -- a backend-only or docs-only commit moves the commit id without
+   * changing a single byte the browser runs -- and prompting someone to reload
+   * for a build identical to the one they already have is worse than not
+   * prompting at all: it teaches them to dismiss the banner.
+   *
+   * This is the fallback path for clients with no service worker (an insecure
+   * origin, or a browser without support). Where one exists, its cache swap
+   * has already noticed.
    */
   async _checkServerBuild() {
     try {
-      const res = await fetch('/api/version', { cache: 'no-store' });
+      const res = await fetch('/version.json', { cache: 'no-store' });
+      // Absent in dev (vite serves from source, there is no build). Nothing to
+      // compare, so nothing to offer.
       if (!res.ok) return;
       const info = await res.json();
+      if (!info.buildId) return;
 
       if (this.buildId === null) {
-        this.buildId = info.build_id;
+        this.buildId = info.buildId;
         return;
       }
-      if (info.build_id && info.build_id !== this.buildId) {
+      if (info.buildId !== this.buildId) {
         this._offer(UpdateKind.SHELL, {
-          source: 'api',
+          source: 'version.json',
           from: this.buildId,
-          to: info.build_id,
+          to: info.buildId,
           version: info.version,
         });
       }
