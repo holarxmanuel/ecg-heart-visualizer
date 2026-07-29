@@ -47,10 +47,10 @@ export class ECGConnection extends EventTarget {
       // A light keepalive stops intermediate proxies from reaping an idle
       // socket during a long paused session.
       clearInterval(this._pingTimer);
+      // Latency measurement drives this now (see link.js), so the keepalive
+      // only has to cover the case where nothing else is pinging.
       this._pingTimer = setInterval(() => {
-        if (this.ws?.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify({ type: 'ping' }));
-        }
+        this.send({ type: 'ping', client_t: performance.now() });
       }, 20000);
     };
 
@@ -82,6 +82,21 @@ export class ECGConnection extends EventTarget {
     const delay = Math.min(500 * 2 ** (this._retry - 1), 8000);
     this.dispatchEvent(new CustomEvent('retry', { detail: { delay } }));
     this._timer = setTimeout(() => this._open(), delay);
+  }
+
+  /**
+   * Send a control message. Returns false when the socket is not open rather
+   * than throwing -- callers are on the acquisition path and must not have to
+   * guard every send.
+   */
+  send(obj) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    try {
+      this.ws.send(JSON.stringify(obj));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   close() {

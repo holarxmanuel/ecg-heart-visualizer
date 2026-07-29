@@ -43,23 +43,62 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 
 
-def list_serial_ports() -> list[dict]:
-    """Every serial port Windows can see, with a 'likely Arduino' hint flag."""
+def _is_phantom(device: str, hwid: str) -> bool:
+    """
+    True for kernel placeholder serial nodes that are not real devices.
+
+    A Linux box enumerates /dev/ttyS0../dev/ttyS31 whether or not any 16550
+    UART exists behind them -- this server reports 32 of them. They are
+    indistinguishable from a real port by name alone, so match on the hwid:
+    pyserial reports a genuine USB device as "USB VID:PID=2341:0043...", and a
+    placeholder as the bare string "n/a".
+
+    This matters twice over. Offering them in the dropdown buries the one real
+    port in noise, and letting autodetect fall back to "if there is exactly one
+    port, use it" would happily open a dead UART and then block for the full
+    read timeout while reporting a connected board.
+    """
+    if not device.startswith("/dev/"):
+        return False  # Windows COMx / macOS cu.* -- leave those alone
+    name = device.rsplit("/", 1)[-1]
+    if name.startswith(("ttyUSB", "ttyACM")):
+        return False  # the only two a USB Arduino ever appears as
+    if name.startswith("ttyS"):
+        # A real 16550 does exist on some hardware; require evidence.
+        return "n/a" in (hwid or "n/a").lower()
+    return False
+
+
+def list_serial_ports(include_phantom: bool = False) -> list[dict]:
+    """
+    Serial ports the OS can see, with a 'likely Arduino' hint flag.
+
+    Kernel placeholder ports are filtered out by default -- see `_is_phantom`.
+    """
     if not PYSERIAL_AVAILABLE:
         return []
 
     ports = []
     for p in list_ports.comports():
+        hwid = p.hwid or ""
+        if not include_phantom and _is_phantom(p.device, hwid):
+            continue
         blob = " ".join(
             str(x) for x in (p.description, p.manufacturer, p.product) if x
         ).lower()
         likely = any(hint in blob for hint in config.SERIAL_AUTODETECT_HINTS)
+        # On Linux the device node itself is strong evidence: an AD8232 on an
+        # Uno can only ever land on ttyUSB* (CH340/FTDI clone) or ttyACM*
+        # (genuine ATmega16U2 CDC). Descriptions on clones are often blank.
+        name = p.device.rsplit("/", 1)[-1]
+        if name.startswith(("ttyUSB", "ttyACM")):
+            likely = True
         ports.append(
             {
                 "device": p.device,
                 "description": p.description or "Unknown device",
                 "manufacturer": p.manufacturer or "",
-                "hwid": p.hwid or "",
+                "hwid": hwid,
                 "likely_arduino": likely,
             }
         )
@@ -69,12 +108,20 @@ def list_serial_ports() -> list[dict]:
 
 
 def autodetect_port() -> str | None:
-    """Best guess at which COM port the Arduino is on. None if nothing matches."""
+    """
+    Best guess at which port the Arduino is on. None if nothing matches.
+
+    Deliberately conservative: it returns a port only when there is positive
+    evidence of a USB serial device. Guessing wrong is worse than returning
+    None, because the UI then shows "connected" against a port that will never
+    produce a sample.
+    """
     ports = list_serial_ports()
     for p in ports:
         if p["likely_arduino"]:
             return p["device"]
-    # Exactly one port on the machine? It is almost certainly the board.
+    # No hints matched. Fall back to "exactly one port" only when that port is
+    # not a bare kernel node -- which `list_serial_ports` has already dropped.
     return ports[0]["device"] if len(ports) == 1 else None
 
 

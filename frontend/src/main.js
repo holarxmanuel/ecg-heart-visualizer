@@ -16,7 +16,10 @@ import { ECGChart } from './chart.js';
 import { HeartAudio } from './audio.js';
 import { HeartView, autoQuality } from './heart.js';
 import { Recorder } from './recorder.js';
-import { ECGConnection, api } from './net.js';
+import { api } from './net.js';
+import { Link, LinkMode } from './link.js';
+import { UpdateManager, UpdateKind } from './updates.js';
+import { WebSerialSensor, webSerialUnavailableReason } from './webserial.js';
 
 // ---------------------------------------------------------------------------
 // DOM
@@ -38,6 +41,21 @@ const dom = {
   btnStartLabel: $('btn-start-label'),
   btnAudio: $('btn-audio'),
   audioIcon: $('audio-icon'),
+  btnUsb: $('btn-usb'),
+  btnInstall: $('btn-install'),
+
+  linkPill: $('link-pill'),
+  linkIcon: $('link-icon'),
+  linkLabel: $('link-label'),
+  linkRtt: $('link-rtt'),
+
+  offlineBanner: $('offline-banner'),
+  offlineText: $('offline-text'),
+  offlineDismiss: $('offline-dismiss'),
+  updateBanner: $('update-banner'),
+  updateText: $('update-text'),
+  updateApply: $('update-apply'),
+  updateDismiss: $('update-dismiss'),
 
   bpmValue: $('bpm-value'),
   bpmInst: $('bpm-inst'),
@@ -108,7 +126,12 @@ let chart;
 let heart;
 let audio;
 let recorder;
-let conn;
+/** @type {Link} */
+let link;
+/** @type {UpdateManager} */
+let updates;
+/** @type {WebSerialSensor|null} */
+let sensor = null;
 
 // ---------------------------------------------------------------------------
 // UI helpers
@@ -230,6 +253,250 @@ function setBpm(bpm) {
   const color = brady || tachy ? '#ffb020' : '#31e07a';
   dom.bpmValue.style.color = color;
   dom.bpmBar.style.background = color;
+}
+
+
+// ---------------------------------------------------------------------------
+// Link state: connection honesty + latency
+// ---------------------------------------------------------------------------
+
+/**
+ * Render the connection pill and the latency readout.
+ *
+ * The user is watching an animation driven by a machine somewhere else, so the
+ * honest thing is to show how far behind it is rather than let them assume it
+ * is instantaneous. `age_ms` from the stream is the better number of the two --
+ * it is how long ago the beat physically happened -- so it wins when present,
+ * with the ping round trip as the fallback before any beat has arrived.
+ */
+function renderLink(st) {
+  const local = st.mode !== LinkMode.SERVER;
+
+  if (local) {
+    dom.linkIcon.textContent = st.mode === LinkMode.HYBRID ? '🔌' : '💾';
+    dom.linkLabel.textContent = st.mode === LinkMode.HYBRID ? 'Local + server' : 'Local';
+    dom.linkLabel.className = 'text-trace-amber';
+    dom.linkRtt.textContent = '0 ms';
+    dom.linkRtt.className = 'text-slate-500 tabular-nums hidden sm:inline';
+    dom.linkPill.title = 'Processing in this browser — no network round trip.';
+    return;
+  }
+
+  if (!st.serverUp) {
+    dom.linkIcon.textContent = '⛔';
+    dom.linkLabel.textContent = 'Disconnected';
+    dom.linkLabel.className = 'text-trace-alert';
+    dom.linkRtt.textContent = '';
+    return;
+  }
+
+  const latency = st.beatAge != null ? st.beatAge : st.rtt;
+  const grade = Link.latencyGrade(latency);
+  const colour = {
+    good: 'text-trace-ecg',
+    fair: 'text-trace-amber',
+    poor: 'text-trace-alert',
+    none: 'text-slate-400',
+  }[grade];
+
+  dom.linkIcon.textContent = '☁';
+  dom.linkLabel.textContent = 'Live';
+  dom.linkLabel.className = 'text-slate-300';
+  dom.linkRtt.textContent = latency == null ? '—' : `${Math.round(latency)} ms`;
+  dom.linkRtt.className = `${colour} tabular-nums hidden sm:inline`;
+  dom.linkPill.title =
+    st.rtt == null
+      ? 'Measuring round-trip time…'
+      : `Round trip ${Math.round(st.rtt)} ms` +
+        (st.beatAge != null ? ` · newest beat ${Math.round(st.beatAge)} ms old` : '');
+}
+
+function showOfflineBanner(reason) {
+  dom.offlineText.textContent =
+    reason === 'unreachable'
+      ? 'Cannot reach the server — running the local simulation. Live sensor readings are unavailable.'
+      : 'Connection lost — live sensor readings are paused. Showing the local simulation until the server returns.';
+  dom.offlineBanner.classList.remove('hidden');
+  dom.offlineBanner.classList.add('flex');
+}
+
+function hideOfflineBanner() {
+  dom.offlineBanner.classList.add('hidden');
+  dom.offlineBanner.classList.remove('flex');
+}
+
+// ---------------------------------------------------------------------------
+// USB sensor (Web Serial)
+// ---------------------------------------------------------------------------
+
+/**
+ * Connect an AD8232 plugged into *this* machine.
+ *
+ * The samples are processed locally rather than round-tripped, because the
+ * whole point of reading the port here is that the beat should reach the heart
+ * without waiting for a network hop. They are still forwarded to the server so
+ * the session exists there too -- but that forwarding is fire-and-forget and
+ * can never stall acquisition.
+ */
+async function connectUsbSensor() {
+  const reason = webSerialUnavailableReason();
+  if (reason) {
+    toast(reason, 'error');
+    return;
+  }
+
+  try {
+    sensor = new WebSerialSensor();
+    const info = await sensor.requestAndOpen();
+
+    // Tell the server to expect forwarded samples, so it stops simulating and
+    // its own status reflects what is really driving the trace.
+    try {
+      await api.setSource('client', info.label);
+    } catch {
+      // Server unavailable is not fatal here -- local processing is the
+      // primary path and works regardless.
+    }
+
+    const push = link.useLocal('push', { hybrid: true, label: info.label });
+
+    sensor.addEventListener('samples', (e) => {
+      const { samples, leadsOff } = e.detail;
+      push.push(samples, leadsOff);
+      link.forwardSamples(samples, leadsOff);
+    });
+
+    sensor.addEventListener('close', () => {
+      toast('USB sensor disconnected', 'warn');
+      dom.btnUsb.classList.remove('btn-primary');
+      link.useServer();
+      api.setSource('simulate').catch(() => {});
+    });
+
+    sensor.addEventListener('error', (e) => toast(`Sensor error: ${e.detail.message}`, 'error'));
+
+    dom.btnUsb.classList.add('btn-primary');
+    state.running = true;
+    dom.btnStartLabel.textContent = 'Stop Monitoring';
+    toast(`USB sensor connected (${info.label})`, 'success');
+  } catch (err) {
+    // The user closing the port picker throws, and is not an error worth
+    // shouting about.
+    const msg = String(err?.message || err);
+    if (!/No port selected|cancelled/i.test(msg)) toast(msg, 'error');
+    sensor = null;
+  }
+}
+
+async function disconnectUsbSensor() {
+  await sensor?.close();
+  sensor = null;
+  dom.btnUsb.classList.remove('btn-primary');
+}
+
+// ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+
+function wireUpdates() {
+  updates = new UpdateManager();
+
+  updates.addEventListener('update', (e) => {
+    const d = e.detail;
+    if (d.kind === UpdateKind.SHELL) {
+      dom.updateText.textContent = d.version
+        ? `Version ${d.version} is available.`
+        : 'A new version of the app is available.';
+      dom.updateApply.textContent = 'Update now';
+    } else {
+      dom.updateText.textContent = d.dirty
+        ? `Update ${d.remoteVersion} is available, but you have uncommitted local changes — commit or stash them first.`
+        : `Update available: ${d.localVersion} → ${d.remoteVersion}. Pull and rebuild?`;
+      dom.updateApply.textContent = d.dirty ? 'Open repository' : 'Update & rebuild';
+    }
+    dom.updateBanner.dataset.kind = d.kind;
+    dom.updateBanner.dataset.dirty = d.dirty ? '1' : '';
+    dom.updateBanner.dataset.repo = d.repo || '';
+    dom.updateBanner.classList.remove('hidden');
+    dom.updateBanner.classList.add('flex');
+  });
+
+  updates.addEventListener('insecure', (e) => {
+    // Worth saying once: on an insecure origin neither offline mode nor USB
+    // sensors can work, and both failures would otherwise look like bugs.
+    console.warn(e.detail.message);
+    dom.btnUsb.title = e.detail.message;
+  });
+
+  dom.updateDismiss.addEventListener('click', () => {
+    updates.dismiss();
+    dom.updateBanner.classList.add('hidden');
+    dom.updateBanner.classList.remove('flex');
+  });
+
+  dom.updateApply.addEventListener('click', async () => {
+    const kind = dom.updateBanner.dataset.kind;
+
+    if (kind === UpdateKind.SHELL) {
+      updates.applyShellUpdate();
+      return;
+    }
+
+    if (dom.updateBanner.dataset.dirty) {
+      window.open(`https://github.com/${dom.updateBanner.dataset.repo}`, '_blank');
+      return;
+    }
+
+    dom.updateApply.disabled = true;
+    dom.updateApply.textContent = 'Updating…';
+    try {
+      const res = await updates.applyCloneUpdate();
+      toast(
+        res.restart_required
+          ? `Updated to ${res.version}. Restart the backend to finish.`
+          : `Updated to ${res.version}.`,
+        'success'
+      );
+      dom.updateApply.textContent = 'Reload';
+      dom.updateApply.disabled = false;
+      dom.updateApply.onclick = () => window.location.reload();
+    } catch (err) {
+      toast(String(err.message || err), 'error');
+      dom.updateApply.disabled = false;
+      dom.updateApply.textContent = 'Retry';
+    }
+  });
+
+  updates.start();
+}
+
+// ---------------------------------------------------------------------------
+// Install prompt
+// ---------------------------------------------------------------------------
+
+function wireInstall() {
+  let deferred = null;
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    // Chrome fires this instead of showing its own UI once preventDefault is
+    // called, which lets the button live in the header with everything else.
+    e.preventDefault();
+    deferred = e;
+    dom.btnInstall.classList.remove('hidden');
+  });
+
+  dom.btnInstall.addEventListener('click', async () => {
+    if (!deferred) return;
+    deferred.prompt();
+    const { outcome } = await deferred.userChoice;
+    if (outcome === 'accepted') dom.btnInstall.classList.add('hidden');
+    deferred = null;
+  });
+
+  window.addEventListener('appinstalled', () => {
+    dom.btnInstall.classList.add('hidden');
+    toast('Installed. It will keep working offline after this first load.', 'success');
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -495,6 +762,17 @@ function bindControls() {
   dom.btnRefreshPorts.addEventListener('click', refreshPorts);
 
   // --- audio ------------------------------------------------------------
+  dom.btnUsb.addEventListener('click', async () => {
+    if (sensor?.connected) {
+      await disconnectUsbSensor();
+      link.useServer();
+      api.setSource('simulate').catch(() => {});
+      toast('USB sensor disconnected', 'info');
+    } else {
+      await connectUsbSensor();
+    }
+  });
+
   dom.btnAudio.addEventListener('click', async () => {
     if (!state.audioArmed) {
       const ok = await armAudio();
@@ -524,6 +802,10 @@ function bindControls() {
   // --- simulation -------------------------------------------------------
   const pushSim = debounce(async (patch) => {
     try {
+      // Apply locally first: offline that is the only thing running, and
+      // online it costs nothing. A slider that does nothing when the network
+      // is down is indistinguishable from a broken control.
+      link.engine.configureSimulation(patch);
       await api.setSimulation(patch);
     } catch (err) {
       toast(err.message, 'error');
@@ -678,28 +960,58 @@ async function boot() {
   bindControls();
 
   // --- backend ----------------------------------------------------------
-  conn = new ECGConnection();
-  conn.addEventListener('hello', (e) => onHello(e.detail));
-  conn.addEventListener('batch', (e) => onBatch(e.detail));
-  conn.addEventListener('status', (e) => renderStatus(e.detail.status));
-  conn.addEventListener('open', () => {
+  // Link owns the choice of where data comes from -- the server, or the local
+  // JS pipeline -- and re-emits both under one event surface, so everything
+  // below is written once and works either way.
+  link = new Link();
+  link.addEventListener('hello', (e) => onHello(e.detail));
+  link.addEventListener('batch', (e) => onBatch(e.detail));
+  link.addEventListener('status', (e) => renderStatus(e.detail.status));
+  link.addEventListener('link', (e) => renderLink(e.detail));
+
+  link.addEventListener('open', () => {});
+
+  link.addEventListener('fallback', (e) => {
+    // The trace keeps moving on local simulation. Say so explicitly -- a
+    // monitor that silently switches data sources is misleading, and a
+    // monitor that silently freezes is worse.
+    showOfflineBanner(e.detail.reason);
+    dom.livePing.classList.add('is-idle');
+    toast('Server unreachable — switched to local simulation', 'warn');
+  });
+
+  link.conn.addEventListener('open', () => {
     dom.btnStart.disabled = false;
+    hideOfflineBanner();
+    dom.livePing.classList.remove('is-idle');
     toast('Connected to ECG server', 'success');
   });
-  conn.addEventListener('close', () => {
+
+  link.conn.addEventListener('close', () => {
     dom.statusDot.className = 'h-2 w-2 rounded-full bg-trace-alert';
     dom.statusLabel.textContent = 'Server offline';
     dom.statusDetail.textContent = '· retrying…';
     dom.livePing.classList.add('is-idle');
   });
-  conn.connect();
+
+  link.connect();
+  renderLink(link.state());
+
+  dom.offlineDismiss.addEventListener('click', hideOfflineBanner);
+
+  wireUpdates();
+  wireInstall();
 
   try {
     const cfg = await api.config();
     onHello(cfg);
   } catch {
-    dom.bootStatus.textContent = 'Backend not reachable — start the Python server';
-    toast('Backend not reachable. Run: python backend/run_server.py', 'error');
+    // No server at all. The app is still fully usable on local simulation,
+    // which is the entire point of porting the DSP to the browser.
+    dom.bootStatus.textContent = 'Server unreachable — using local simulation';
+    dom.btnStart.disabled = false;
+    link.useLocal('simulate');
+    showOfflineBanner('unreachable');
   }
 
   requestAnimationFrame((t) => {
@@ -718,6 +1030,11 @@ async function boot() {
     get recorder() { return recorder; },
     get fps() { return fps; },
     get renderInfo() { return heart.renderer.info.render; },
+    get link() { return link; },
+    get linkState() { return link.state(); },
+    get engine() { return link.engine; },
+    get sensor() { return sensor; },
+    get updates() { return updates; },
   };
 
   hideBoot();

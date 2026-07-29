@@ -1,0 +1,38 @@
+# Always-on ECG backend.
+#
+# Install:
+#   sudo cp deploy/ecg-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ecg-backend
+#
+# The requirement is that this never stops, so the restart policy is
+# unconditional: any exit, any reason, comes back in 3 s. RestartSec is
+# deliberately short but non-zero -- a crash loop against a busy serial port
+# should back off enough to stay debuggable.
+
+[Unit]
+Description=Real-Time ECG Heart Visualizer backend (FastAPI + 1 kHz acquisition)
+Documentation=https://github.com/holarxmanuel/ecg-heart-visualizer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=root
+WorkingDirectory=/root/ecg-heart-visualizer/backend
+ExecStart=/root/ecg-heart-visualizer/backend/.venv/bin/python run_server.py
+Environment=PYTHONUNBUFFERED=1
+
+Restart=always
+RestartSec=3
+
+# The acquisition loop is a fixed-cadence pump; being descheduled shows up
+# directly as waveform splices. Nudge it above ordinary background work.
+Nice=-5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecg-backend
+
+[Install]
+WantedBy=multi-user.target

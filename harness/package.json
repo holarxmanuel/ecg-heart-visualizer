@@ -1,0 +1,13 @@
+{
+  "name": "ecg-harness",
+  "private": true,
+  "type": "module",
+  "description": "Browser end-to-end tests. Kept in the repo this time -- the previous copy lived in a scratchpad and was lost.",
+  "scripts": {
+    "test": "node test.mjs",
+    "debug": "node debug.mjs"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.0.0"
+  }
+}

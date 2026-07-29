@@ -13,6 +13,12 @@
       name="description"
       content="Real-time single-lead ECG monitor with an anatomically accurate beating 3D heart and synchronised heart sounds."
     />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="ECG Heart" />
     <title>ECG Heart Visualizer</title>
   </head>
 
@@ -34,6 +40,39 @@
     </div>
 
     <div id="app" class="flex min-h-full flex-col">
+      <!-- ================= banners ================= -->
+      <!-- Connection loss. Says exactly what stopped and what did not, because
+           "offline" alone leaves the user guessing whether the trace on screen
+           is real. -->
+      <div
+        id="offline-banner"
+        class="hidden items-center gap-3 border-b border-trace-amber/30 bg-trace-amber/10 px-4 py-2 text-[13px] text-trace-amber"
+        role="status"
+      >
+        <span aria-hidden="true">⚠</span>
+        <span id="offline-text" class="flex-1">
+          No connection to the server — live sensor readings are paused. Showing
+          the local simulation.
+        </span>
+        <button id="offline-dismiss" class="btn btn-ghost !py-0.5 !text-[12px]">
+          Dismiss
+        </button>
+      </div>
+
+      <div
+        id="update-banner"
+        class="hidden items-center gap-3 border-b border-trace-ecg/30 bg-trace-ecg/10 px-4 py-2 text-[13px] text-trace-ecg"
+        role="status"
+      >
+        <span aria-hidden="true">⬆</span>
+        <span id="update-text" class="flex-1">A new version is available.</span>
+        <button id="update-apply" class="btn btn-primary !py-0.5 !text-[12px]">
+          Update now
+        </button>
+        <button id="update-dismiss" class="btn btn-ghost !py-0.5 !text-[12px]">
+          Later
+        </button>
+      </div>
       <!-- ================= header ================= -->
       <header
         class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-white/5 bg-ink-800/70 px-4 py-2.5 backdrop-blur"
@@ -61,6 +100,19 @@
           <span id="status-detail" class="hidden text-slate-500 sm:inline"></span>
         </div>
 
+        <!-- Link quality. The point is transparency: the user is watching an
+             animation driven from another machine, so they get to see how far
+             behind it is rather than having to assume. -->
+        <div
+          id="link-pill"
+          class="flex items-center gap-2 rounded-full border border-white/10 bg-ink-700 px-3 py-1 font-mono text-[11px]"
+          title="Round-trip time to the server"
+        >
+          <span id="link-icon" aria-hidden="true">☁</span>
+          <span id="link-label" class="text-slate-300">Connecting…</span>
+          <span id="link-rtt" class="hidden text-slate-500 tabular-nums sm:inline"></span>
+        </div>
+
         <div
           id="leads-off"
           class="hidden items-center gap-1.5 rounded-full border border-trace-amber/40 bg-trace-amber/10 px-3 py-1 font-mono text-[11px] text-trace-amber"
@@ -71,6 +123,22 @@
         <div class="ml-auto flex items-center gap-2">
           <button id="btn-start" class="btn btn-primary" disabled>
             <span id="btn-start-label">Start Monitoring</span>
+          </button>
+          <button
+            id="btn-usb"
+            class="btn btn-ghost"
+            title="Read an AD8232 connected to this computer over USB"
+          >
+            <span aria-hidden="true">🔌</span>
+            <span class="hidden sm:inline">USB Sensor</span>
+          </button>
+          <button
+            id="btn-install"
+            class="btn btn-ghost hidden"
+            title="Install this app on your computer"
+          >
+            <span aria-hidden="true">⬇</span>
+            <span class="hidden sm:inline">Install</span>
           </button>
           <button id="btn-audio" class="btn btn-ghost" title="Toggle heart sounds">
             <span id="audio-icon">🔇</span>

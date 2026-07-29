@@ -1,0 +1,83 @@
+# The two suites the project already relies on, run automatically.
+#
+# selftest.py is the oracle: if the signal chain regresses, no reading from
+# this system can be trusted, so it gates everything else. verify_dsp.py then
+# proves the browser DSP still matches that oracle sample-for-sample -- the
+# check that stops offline mode drifting away from the server.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  signal-chain:
+    name: Signal chain + JS/Python DSP equivalence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend
+        working-directory: backend
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Signal-chain regression (the oracle)
+        working-directory: backend
+        run: .venv/bin/python selftest.py
+
+      - name: Browser DSP matches the server DSP
+        working-directory: backend
+        run: .venv/bin/python verify_dsp.py
+
+      - name: Coefficients are in sync with config.py
+        working-directory: backend
+        run: |
+          .venv/bin/python export_dsp.py
+          if ! git diff --quiet -- ../frontend/src/dsp/coeffs.js; then
+            echo "::error::coeffs.js is stale. Run: cd backend && python export_dsp.py"
+            git diff -- ../frontend/src/dsp/coeffs.js
+            exit 1
+          fi
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build (also generates the service worker)
+        working-directory: frontend
+        run: npm run build
+
+      - name: Service worker was fully generated
+        working-directory: frontend
+        run: |
+          # build-sw.mjs throws on unsubstituted placeholders, but assert here
+          # too: a service worker that fails to install silently removes
+          # offline support from every client.
+          test -f dist/sw.js
+          test -f dist/version.json
+          ! grep -q '__BUILD_ID__\|__PRECACHE__' dist/sw.js

@@ -69,7 +69,10 @@ SERIAL_LEADS_OFF_TOKEN = "!"
 # SIGNAL PROCESSING
 # ---------------------------------------------------------------------------
 
-MAINS_HZ = 60.0  # 60 for North America, 50 for EU/Asia. Notch filter target.
+# 60 for North America, 50 for EU/Asia/Africa. Notch filter target.
+# Nigeria (where this is deployed) is 50 Hz -- leaving this at 60 leaves
+# visible mains hum riding on the filtered trace.
+MAINS_HZ = 50.0
 NOTCH_Q = 30.0  # Notch quality factor (narrower = higher Q)
 HIGHPASS_HZ = 0.5  # removes baseline wander / breathing drift
 LOWPASS_HZ = 40.0  # removes EMG + high-frequency hash (diagnostic-band display)
@@ -90,15 +93,28 @@ BPM_MAX = 240.0
 # under the 150 ms budget while staying cheap on CPU.
 BATCH_INTERVAL_MS = 20
 
-HOST = "127.0.0.1"
+# Bind on all interfaces: Caddy terminates TLS on :443 and reverse-proxies
+# here, and the port is not exposed to the internet directly (see Caddyfile
+# and deploy/). Set back to 127.0.0.1 for a purely local run.
+HOST = "0.0.0.0"
 PORT = 8000
 
 # Origins allowed to talk to this API (the Vite dev server runs on 3000).
+# The deployed origin. nip.io resolves <dashed-ip>.nip.io -> that IP, which
+# lets Let's Encrypt issue a real certificate without owning a domain. A
+# secure context is mandatory: Web Serial and service workers both refuse to
+# run on plain http://<ip>.
+PUBLIC_HOST = "143-198-27-18.nip.io"
+PUBLIC_ORIGIN = f"https://{PUBLIC_HOST}"
+
 CORS_ORIGINS = [
+    PUBLIC_ORIGIN,
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:4173",
     "http://127.0.0.1:4173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 ]
 
 # ---------------------------------------------------------------------------

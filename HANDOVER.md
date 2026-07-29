@@ -1,9 +1,65 @@
 # PROJECT HANDOVER — Real-Time ECG Heart Visualizer
 
-**Written:** 2026-07-27
-**Reason:** migrating development from a slow Windows laptop to the Ubuntu server (`ssh tofunmi`), where work continues via VS Code Remote-SSH.
+**Written:** 2026-07-27 · **Updated:** 2026-07-29 (server build-out complete)
 
-This document is the single source of truth for: what we set out to build, what is actually built and proven, what is *not* built, and the new architecture required for server-hosted operation with a client-side USB sensor.
+---
+
+# PART 0 — STATE AS OF 2026-07-29
+
+Everything specified in Part 5 has now been **built and verified**. What
+changed since the migration:
+
+| Item | State | Evidence |
+|---|---|---|
+| Always-on service | **Done** | systemd `ecg-backend`, restarts on any exit |
+| Reachable on the network | **Done** | `HOST=0.0.0.0`, Caddy on 80/443 |
+| HTTPS / secure context | **Config done, blocked** | see Part 0.1 |
+| JS DSP port (offline) | **Done, bit-exact** | `verify_dsp.py` — 0.000e+00 V max diff |
+| Local engine | **Done** | emits the server's exact wire format |
+| PWA / offline | **Done, verified** | boots and beats with the network OFF |
+| Web Serial USB sensor | **Done** | `webserial.js` + `ClientFedSource` |
+| Latency meter | **Done** | RTT + true beat age, colour-coded |
+| Online/offline indicator | **Done** | socket state, not `navigator.onLine` |
+| Auto-update (web + PWA) | **Done** | build id polling + SW cache swap |
+| Auto-update (local clone) | **Done** | loopback-only `git pull` + rebuild |
+| Linux serial detection | **Done** | 32 phantom ports → 0 |
+| Mains frequency | **Done** | 50 Hz (Nigeria) |
+| GitHub + CI | **Done** | `holarxmanuel/ecg-heart-visualizer` |
+| AO "comb" artifact (4.1) | **Resolved** | confirmed by screenshot |
+
+Test results: `selftest.py` 20/20 · `verify_dsp.py` all pass · `smoketest.py`
+all pass · browser harness **42/42**.
+
+## 0.1 The one outstanding blocker
+
+**Ports 80 and 443 are blocked by the DigitalOcean cloud firewall.**
+
+The host firewall is wide open (`iptables` INPUT ACCEPT, ufw inactive) and
+Caddy is listening correctly, but three independent external vantage points
+(Let's Encrypt's validator, allorigins, r.jina.ai) all time out. Only 22 gets
+through. This cannot be fixed from inside the droplet.
+
+Fix it in the DigitalOcean panel → Networking → Firewalls → inbound TCP 80 and
+443 from all sources. Caddy retries automatically; the certificate will appear
+without further action.
+
+**Until then:** the site is reachable at `http://143.198.27.18:8000` and
+everything works *except* Web Serial and PWA install, both of which require a
+secure context. Locally (`http://localhost:8000`) all features work, because
+localhost is exempt.
+
+## 0.2 Where the architecture went
+
+The `ECGSource` abstraction absorbed the new requirement exactly as intended —
+`ClientFedSource` is a third implementation, not a special case. The genuinely
+new idea is that the **signal chain now exists twice**, in Python and in
+JavaScript, with `verify_dsp.py` as the contract between them.
+
+That was the largest item in the old Part 5.3, and the approach that made it
+cheap was refusing to reimplement filter *design* in JS. `backend/export_dsp.py`
+bakes scipy's SOS matrices into a generated `coeffs.js`; only the ~20 lines of
+`sosfilt` arithmetic were ported by hand. The result is bit-identical output,
+not merely close.
 
 ---
 
@@ -271,7 +327,9 @@ start.ps1 / start.bat   Windows launchers (see Part 6.3 for Linux)
 
 # PART 5 — THE NEW ARCHITECTURE (requested, NOT yet built)
 
-Everything in this part is **specification, not implementation**. Nothing here has been written.
+**STATUS (2026-07-29): all of this is now built.** It is kept as written
+because the reasoning behind each decision is still the reasoning that governs
+the code. See Part 0 for what shipped and `DEPLOYMENT.md` for how it runs.
 
 ## 5.1 Target model
 

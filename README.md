@@ -1,10 +1,39 @@
 # Real-Time ECG Heart Visualizer
 
-A single-lead ECG monitor with an **anatomically accurate, procedurally generated 3D heart** that beats on every detected R-peak, in sync with synthesised heart sounds.
+A single-lead ECG monitor whose centrepiece is an **anatomically accurate,
+procedurally generated 3D heart** that contracts on every detected R-peak, in
+sync with synthesised heart sounds, above a scrolling ECG waveform.
 
-It runs today against a physically-modelled simulation of an **AD8232 + Arduino Uno R3**. When the real hardware arrives, connecting it is a button click — no code changes.
+**Live:** <https://143-198-27-18.nip.io> · **Local:** clone and run, see
+[DEPLOYMENT.md](DEPLOYMENT.md)
 
-> **Not a medical device.** For education and development only.
+---
+
+## What it does
+
+- **Runs anywhere the browser does.** The whole signal chain — simulator,
+  filters, Pan-Tompkins detector — exists in both Python and JavaScript, and
+  `backend/verify_dsp.py` proves the two are bit-identical. So the app keeps
+  working with the network unplugged, and a USB sensor can be processed
+  locally with no round trip.
+- **Reads a real AD8232 over USB**, from the user's own machine, via Web
+  Serial — nothing to install beyond the browser.
+- **Installs as an app** and works offline after the first load.
+- **Tells you the truth about latency.** A round-trip meter and the true age of
+  the newest beat, both in the header, because you are watching an animation
+  driven by another machine.
+- **Stays up to date.** A new deploy prompts every open tab and installed app
+  to reload; a local clone is told when it falls behind the repository.
+
+---
+
+## Access
+
+| | URL | Notes |
+|---|---|---|
+| Hosted | `https://143-198-27-18.nip.io` | always on, always current |
+| Installed app | same, then "Install" | works offline after first load |
+| Local clone | `http://localhost:8000` | full features; localhost is a secure context |
 
 ---
 

@@ -1,13 +1,14 @@
 {
   "name": "ecg-heart-visualizer",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Real-time ECG monitor with a procedurally generated, anatomically accurate beating 3D heart",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview --port 3000"
+    "build": "vite build && node build-sw.mjs",
+    "preview": "vite preview --port 3000",
+    "verify:dsp": "cd ../backend && .venv/bin/python verify_dsp.py"
   },
   "dependencies": {
     "three": "^0.171.0"

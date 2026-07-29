@@ -15,6 +15,15 @@ npm-debug.log*
 *.csv
 !docs/**/*.csv
 
+# Secrets -- never commit these
+*.token
+.env
+.env.*
+!.env.example
+
+# Caddy state (certificates and ACME account keys)
+deploy/caddy-data/
+
 # Editors / OS
 .vscode/
 .idea/

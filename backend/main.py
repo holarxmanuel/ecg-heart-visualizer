@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 
 import config
 from ecg import (
+    ClientFedSource,
     ECGFilter,
     ECGSource,
     RPeakDetector,
@@ -40,6 +41,9 @@ from ecg import (
     list_serial_ports,
 )
 from ecg.serial_source import PYSERIAL_AVAILABLE, SerialError
+
+import version as version_info
+import updater
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s  %(levelname)-7s %(name)s: %(message)s"
@@ -183,6 +187,10 @@ class ECGPipeline:
                 src: ECGSource = SimulatedSource(**self.sim_config)
             elif mode == "serial":
                 src = SerialSource(port=port, baud=baud or config.SERIAL_BAUD)
+            elif mode == "client":
+                # Samples arrive from a browser's Web Serial port. Same
+                # contract, same downstream path -- see ecg/client_source.py.
+                src = ClientFedSource(label=port or "browser USB sensor")
             else:
                 raise ValueError(f"unknown mode: {mode!r}")
 
@@ -218,6 +226,11 @@ class ECGPipeline:
         async with self._lock:
             self._reset_processing()
             self.session_started = time.time()
+
+    @property
+    def client_source(self) -> ClientFedSource | None:
+        """The active browser-fed source, if that is what is selected."""
+        return self.source if isinstance(self.source, ClientFedSource) else None
 
     def configure_simulation(self, **kwargs: Any) -> bool:
         """Record the requested settings, and apply them live if we can."""
@@ -443,7 +456,7 @@ pipeline = ECGPipeline()
 
 
 class SourceRequest(BaseModel):
-    mode: Literal["simulate", "serial", "off"]
+    mode: Literal["simulate", "serial", "client", "off"]
     port: str | None = None
     baud: int | None = None
 
@@ -466,7 +479,11 @@ async def lifespan(app: FastAPI):
     await pipeline.stop_loop()
 
 
-app = FastAPI(title="ECG Heart Visualizer", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="ECG Heart Visualizer",
+    version=version_info.read_version(),
+    lifespan=lifespan,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,
@@ -478,7 +495,12 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health() -> dict[str, Any]:
-    return {"ok": True, "service": "ecg-heart-visualizer", "version": "1.0.0"}
+    return {
+        "ok": True,
+        "service": "ecg-heart-visualizer",
+        "version": version_info.read_version(),
+        "build_id": version_info.build_id(),
+    }
 
 
 @app.get("/api/status")
@@ -541,6 +563,51 @@ async def reset_session() -> dict[str, Any]:
     return {"ok": True, "status": pipeline.status()}
 
 
+@app.get("/api/version")
+async def get_version() -> dict[str, Any]:
+    """
+    What build is this? Polled by every open tab and every installed PWA.
+
+    Cheap on purpose -- it is hit every 60 s per client, so it must not shell
+    out to git on each call beyond what `version.info()` already caches.
+    """
+    return version_info.info()
+
+
+@app.get("/api/update/check")
+async def check_update() -> dict[str, Any]:
+    """Compare this checkout against the published GitHub version."""
+    return await asyncio.to_thread(updater.check)
+
+
+@app.post("/api/update/apply")
+async def apply_update(request: Request) -> JSONResponse:
+    """
+    Pull the newest code and rebuild -- for a user running their own clone.
+
+    Deliberately restricted to loopback callers. This endpoint runs git and npm
+    on the host, so exposing it on the public deployment would hand anyone who
+    can reach the port a way to run whatever lands in the repository. A user on
+    their own machine reaches it via localhost and is unaffected; the server
+    deployment refuses it outright.
+    """
+    client_host = request.client.host if request.client else ""
+    if not updater.is_local_request(client_host):
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": (
+                    "Self-update is only available to a locally-run instance. "
+                    "The hosted deployment is updated by its maintainer."
+                ),
+            },
+            status_code=403,
+        )
+
+    result = await asyncio.to_thread(updater.apply)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 500)
+
+
 @app.websocket("/ws/ecg")
 async def ws_ecg(ws: WebSocket) -> None:
     await ws.accept()
@@ -556,8 +623,25 @@ async def ws_ecg(ws: WebSocket) -> None:
             # The browser only sends keepalives and the occasional inline
             # control message; all real control goes through the REST API.
             msg = await ws.receive_json()
-            if msg.get("type") == "ping":
-                await ws.send_json({"type": "pong", "t": time.time() * 1000.0})
+            kind = msg.get("type")
+
+            if kind == "ping":
+                # Echo the client's own timestamp back untouched so it can
+                # compute a true round trip without trusting our clock -- the
+                # two machines are not synchronised and never will be.
+                await ws.send_json(
+                    {
+                        "type": "pong",
+                        "t": time.time() * 1000.0,
+                        "client_t": msg.get("client_t"),
+                    }
+                )
+
+            elif kind == "samples":
+                # Web Serial data forwarded from the user's own USB port.
+                src = pipeline.client_source
+                if src is not None:
+                    src.feed(msg.get("data") or [], bool(msg.get("leads_off")))
     except WebSocketDisconnect:
         pass
     except Exception:

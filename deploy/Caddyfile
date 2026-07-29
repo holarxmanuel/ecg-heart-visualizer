@@ -1,0 +1,63 @@
+# TLS termination for the ECG Heart Visualizer.
+#
+# Why this exists at all: Web Serial (reading the AD8232 off the user's own
+# USB port) and service workers (offline / installable PWA) BOTH refuse to run
+# outside a secure context. http://143.198.27.18:8000 is not one. localhost is
+# exempt, a public IP is not -- so there is no way to ship the two headline
+# features without a real certificate.
+#
+# nip.io resolves 143-198-27-18.nip.io -> 143.198.27.18, which gives us a
+# hostname Let's Encrypt will issue for, with no domain purchase. Caddy does
+# the ACME dance and renewal by itself.
+
+{
+	email xmrlining@gmail.com
+	# Uncomment to debug certificate issuance:
+	# debug
+}
+
+143-198-27-18.nip.io {
+	encode zstd gzip
+
+	# The WebSocket carries a 1 kHz sample stream in 20 ms batches. Caddy
+	# proxies WebSockets natively; the long timeouts matter because an idle
+	# paused session must not be reaped out from under the dashboard.
+	reverse_proxy 127.0.0.1:8000 {
+		flush_interval -1
+		transport http {
+			read_timeout 24h
+			write_timeout 24h
+		}
+	}
+
+	# The service worker must never be served from cache, or a client can be
+	# permanently pinned to an old build -- the one failure mode that makes an
+	# auto-updating PWA unfixable in the field.
+	@sw path /sw.js /version.json
+	header @sw Cache-Control "no-cache, no-store, must-revalidate"
+
+	# Hashed asset filenames are content-addressed, so they are safe to pin.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	header {
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Content-Type-Options nosniff
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/ecg.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
+
+# Plain-HTTP fallback on the bare IP. Kept deliberately: it is the "server IP
+# + dedicated port" access path, and it is what still answers if ACME ever
+# fails. It cannot host Web Serial or the PWA -- insecure origin -- so it
+# redirects anyone who lands here to the real thing.
+http://143.198.27.18 {
+	redir https://143-198-27-18.nip.io{uri} permanent
+}

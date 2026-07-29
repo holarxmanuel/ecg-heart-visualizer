@@ -3,6 +3,7 @@
 from .source import ECGSource, SourceStatus
 from .simulator import SimulatedSource
 from .serial_source import SerialSource, list_serial_ports, autodetect_port
+from .client_source import ClientFedSource
 from .filters import ECGFilter
 from .detector import RPeakDetector
 
@@ -11,6 +12,7 @@ __all__ = [
     "SourceStatus",
     "SimulatedSource",
     "SerialSource",
+    "ClientFedSource",
     "list_serial_ports",
     "autodetect_port",
     "ECGFilter",
