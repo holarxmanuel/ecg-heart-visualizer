@@ -191,6 +191,30 @@ function renderStatus(s) {
   dom.livePing.classList.toggle('is-idle', !live);
 
   state.running = !!s.running;
+
+  // Keep the UI's idea of the source in step with reality.
+  //
+  // This used to be set only inside selectSource(), so it was wrong after
+  // every page load: the app came up believing the source was 'off' while a
+  // simulation was plainly running, and the Start/Pause button therefore
+  // re-selected the source instead of pausing it. Nothing surfaced the
+  // mismatch, because the button's LABEL comes from status and was correct.
+  if (s.mode === 'simulating') state.mode = 'simulate';
+  else if (s.mode === 'connected') state.mode = 'serial';
+  else if (s.mode === 'idle') state.mode = 'off';
+  // 'error' deliberately leaves it alone: the source still exists, it is just
+  // unhappy, and forgetting which one it is would make recovery harder.
+
+  // Session clock. Same problem: it only started when the user picked a source
+  // by hand, so a page that loaded against an already-running session showed
+  // 00:00 forever. The server (and the local engine) both report uptime, so
+  // trust that and fall back to the local clock only if it is absent.
+  if (typeof s.uptime_s === 'number' && s.uptime_s > 0) {
+    state.sessionStart = Date.now() - s.uptime_s * 1000;
+  } else if (s.running && state.sessionStart === null) {
+    state.sessionStart = Date.now();
+  }
+
   dom.btnStartLabel.textContent = s.mode === 'idle'
     ? 'Start Monitoring'
     : s.running
@@ -508,7 +532,9 @@ async function disconnectUsbSensor() {
 // ---------------------------------------------------------------------------
 
 function wireUpdates() {
-  updates = new UpdateManager();
+  // Gated on the app being allowed to talk to the server at all. In offline
+  // mode there is nothing to check against and nothing to update to.
+  updates = new UpdateManager(() => modes.mode === AppMode.ONLINE);
 
   updates.addEventListener('update', (e) => {
     const d = e.detail;
@@ -642,6 +668,8 @@ function wireInstall() {
  */
 async function checkSecureOrigin() {
   if (window.isSecureContext) return;
+  // Nothing to look up while offline, and the request would only fail.
+  if (!navigator.onLine || modes.mode !== AppMode.ONLINE) return;
 
   dom.installBlurb.textContent =
     'Installing and USB sensors need a secure (https) connection. This page is running over plain http.';
@@ -685,6 +713,10 @@ function bindModeButtons() {
       hideOfflineBanner();
       toast('Offline mode — everything is processed on this computer.', 'success');
     } else {
+      // Carry whatever the user set while offline up to the server, or the two
+      // disagree about what is being simulated and the trace visibly jumps
+      // when the server's own settings take over.
+      api.setSimulation({ ...link.engine.simConfig }).catch(() => {});
       toast('Online mode — data is processed on the server.', 'success');
     }
     renderLink(link.state());
@@ -692,6 +724,54 @@ function bindModeButtons() {
 
   dom.modeOnline.addEventListener('click', () => apply(AppMode.ONLINE));
   dom.modeOffline.addEventListener('click', () => apply(AppMode.OFFLINE));
+}
+
+// ---------------------------------------------------------------------------
+// Control routing
+// ---------------------------------------------------------------------------
+
+/**
+ * Every control has two possible destinations, and picking the wrong one is
+ * the difference between a working app and a broken one.
+ *
+ * When the local engine is driving, the server is not merely optional -- it is
+ * irrelevant, and may be unreachable. Calling it anyway is what produced
+ * "Failed to fetch" toasts on the sliders and a Pause button that did nothing
+ * while the trace kept running: the local state was in fact updated first, and
+ * then the network call threw and buried that success under an error.
+ *
+ * So: local engine when local, server when server, never both.
+ */
+function drivingLocally() {
+  return link.mode !== LinkMode.SERVER;
+}
+
+async function ctlSetSimulation(patch) {
+  // Always apply locally. Online this keeps the engine warm and correct for
+  // the moment the connection drops, and it costs nothing.
+  link.engine.configureSimulation(patch);
+  if (drivingLocally()) return { ok: true, config: link.engine.simConfig };
+  return api.setSimulation(patch);
+}
+
+async function ctlSetMonitor(running) {
+  if (drivingLocally()) {
+    return { ok: true, status: link.engine.setPaused(!running) };
+  }
+  return api.setMonitor(running);
+}
+
+async function ctlSetSource(mode, port = null) {
+  if (drivingLocally()) {
+    // 'serial' means a board attached to the SERVER, which by definition
+    // cannot be reached from here. The USB Sensor button is the local path.
+    if (mode === 'serial') {
+      throw new Error('Server-side sensors need an online connection. Use USB Sensor instead.');
+    }
+    link.engine.select(mode === 'off' ? 'off' : 'simulate');
+    return { ok: true, status: link.engine.status() };
+  }
+  return api.setSource(mode, port);
 }
 
 // ---------------------------------------------------------------------------
@@ -848,21 +928,21 @@ async function selectSource(mode) {
   try {
     if (mode === 'serial') {
       const port = dom.portSelect.value || null;
-      const res = await api.setSource('serial', port);
+      const res = await ctlSetSource('serial', port);
       renderStatus(res.status);
       state.mode = 'serial';
       state.sessionStart = Date.now();
       chart.clear();
       toast(`Connected to ${res.status.port}`, 'success');
     } else if (mode === 'simulate') {
-      const res = await api.setSource('simulate');
+      const res = await ctlSetSource('simulate');
       renderStatus(res.status);
       state.mode = 'simulate';
       state.sessionStart = Date.now();
       chart.clear();
       toast('Simulation running', 'success');
     } else {
-      const res = await api.setSource('off');
+      const res = await ctlSetSource('off');
       renderStatus(res.status);
       state.mode = 'off';
       chart.clear();
@@ -872,9 +952,9 @@ async function selectSource(mode) {
     dom.serialHint.textContent = err.message;
     // Leave the UI in a usable state rather than a half-connected one.
     try {
-      renderStatus(await api.status());
+      renderStatus(drivingLocally() ? link.engine.status() : await api.status());
     } catch {
-      /* server is down; the socket's retry banner already says so */
+      /* server is down; the connection pill already says so */
     }
   } finally {
     dom.btnStart.disabled = false;
@@ -882,6 +962,13 @@ async function selectSource(mode) {
 }
 
 async function refreshPorts() {
+  if (drivingLocally()) {
+    // These are ports on the SERVER. Offline there is nothing to enumerate,
+    // and asking would just produce a fetch error.
+    dom.portSelect.innerHTML = '<option value="">offline — server ports unavailable</option>';
+    dom.serialHint.textContent = 'Use USB Sensor to read a board attached to this computer.';
+    return;
+  }
   dom.portSelect.innerHTML = '<option>scanning…</option>';
   try {
     const info = await api.ports();
@@ -926,7 +1013,7 @@ function bindControls() {
       return;
     }
     try {
-      const res = await api.setMonitor(!state.running);
+      const res = await ctlSetMonitor(!state.running);
       renderStatus(res.status);
     } catch (err) {
       toast(err.message, 'error');
@@ -1000,8 +1087,7 @@ function bindControls() {
       // Apply locally first: offline that is the only thing running, and
       // online it costs nothing. A slider that does nothing when the network
       // is down is indistinguishable from a broken control.
-      link.engine.configureSimulation(patch);
-      await api.setSimulation(patch);
+      await ctlSetSimulation(patch);
     } catch (err) {
       toast(err.message, 'error');
     }

@@ -131,6 +131,7 @@ export class LocalEngine extends EventTarget {
     this.simConfig = { bpm: 60, noise: 0.15, artifacts: true };
 
     this._timer = null;
+    this.sessionStarted = null;
     this.voltsPerCount = ADC_VREF / ADC_MAX;
     this.mvPerVolt = 1000.0 / AD8232_GAIN;
   }
@@ -162,6 +163,7 @@ export class LocalEngine extends EventTarget {
 
     this.source.start();
     this.paused = false;
+    this.sessionStarted = Date.now();
     this.emitStatus();
     return this.source;
   }
@@ -179,11 +181,25 @@ export class LocalEngine extends EventTarget {
     this.samplesTotal = 0;
     this.seq = 0;
     this.splices = 0;
+    this.sessionStarted = Date.now();
   }
 
   reset() {
     this._resetProcessing();
     this.emitStatus();
+  }
+
+  /**
+   * Pause or resume acquisition.
+   *
+   * The source keeps running while paused -- _tick still drains it -- so that
+   * resuming does not fast-forward through a backlog. Same reasoning as the
+   * server's pipeline.
+   */
+  setPaused(paused) {
+    this.paused = !!paused;
+    this.emitStatus();
+    return this.status();
   }
 
   start() {
@@ -249,6 +265,11 @@ export class LocalEngine extends EventTarget {
       dropped_frames: 0,
       splices: this.splices,
       local: true,
+      // Same field the server reports, so the dashboard's session clock works
+      // identically whichever engine is driving.
+      uptime_s: this.sessionStarted
+        ? Math.round((Date.now() - this.sessionStarted) / 100) / 10
+        : 0,
       last_error: null,
     };
   }

@@ -30,8 +30,15 @@ export const UpdateKind = {
 };
 
 export class UpdateManager extends EventTarget {
-  constructor() {
+  /**
+   * @param {() => boolean} [gate] returns false when the app must not touch
+   *   the network at all. Offline mode means offline: a background poller that
+   *   keeps reaching for the server contradicts the whole point of it, and
+   *   fills the console with failed requests while the app is working fine.
+   */
+  constructor(gate = () => true) {
     super();
+    this._gate = gate;
     this.registration = null;
     this.buildId = null;
     this.pending = null;
@@ -109,6 +116,7 @@ export class UpdateManager extends EventTarget {
 
   async _poll() {
     if (!navigator.onLine) return;
+    if (!this._gate()) return;
 
     // Ask the service worker to re-check for a new script. This is what makes
     // an installed PWA notice a deploy without the user reloading.

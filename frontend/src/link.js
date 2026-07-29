@@ -100,6 +100,11 @@ export class Link extends EventTarget {
     this.conn.addEventListener('pong', (e) => this._onPong(e.detail));
 
     this.conn.addEventListener('open', () => {
+      // The user chose offline; nothing here should undo that.
+      if (this.userMode === AppMode.OFFLINE) {
+        this.conn.close();
+        return;
+      }
       this.serverUp = true;
       this.everConnected = true;
       this._startPinging();
@@ -266,6 +271,7 @@ export class Link extends EventTarget {
   _fallBackToLocal() {
     this._fellBackAutomatically = true;
     this.degraded = true;
+    // Set before start(), so the engine's `hello` reaches the UI.
     this.mode = LinkMode.LOCAL;
     this.engine.start();
     this.engine.select('simulate');
@@ -290,15 +296,32 @@ export class Link extends EventTarget {
 
     if (mode === AppMode.OFFLINE) {
       this.degraded = false;
-      // A locally-attached sensor keeps feeding the local engine; only the
-      // simulation needs re-selecting.
+
+      // Set the mode BEFORE starting the engine. The engine emits `hello` from
+      // start(), and the relay only forwards it when the link is not in server
+      // mode -- so starting first means that hello is dropped and the UI never
+      // seeds its controls from the local engine's actual settings.
+      this.mode = LinkMode.LOCAL;
+
       const sourceMode = keepSensor && this.engine.source ? null : 'simulate';
       this.engine.start();
       if (sourceMode) this.engine.select(sourceMode);
-      this.mode = this.mode === LinkMode.HYBRID ? LinkMode.LOCAL : LinkMode.LOCAL;
+
+      // Offline means offline. Leaving the socket to retry in the background
+      // burns battery, fills the console with connection errors, and keeps the
+      // app behaving as though the server still governs it -- which is exactly
+      // what the mode exists to stop.
+      this._stopPinging();
+      this.serverUp = false;
+      this.rtt = null;
+      this.conn.close();
+
       this._emitLink();
       return;
     }
+
+    // Back to online: reopen the socket we deliberately closed.
+    if (!this.conn.connected) this.conn.connect();
 
     if (this.serverUp) {
       this.degraded = false;
@@ -320,6 +343,7 @@ export class Link extends EventTarget {
   /** Drive from the local JS pipeline (offline simulation, or a local sensor). */
   useLocal(sourceMode = 'simulate', opts = {}) {
     this._fellBackAutomatically = false;
+    // Before start(), so the engine's `hello` is relayed rather than dropped.
     this.mode = opts.hybrid ? LinkMode.HYBRID : LinkMode.LOCAL;
     this.engine.start();
     const src = this.engine.select(sourceMode, opts);

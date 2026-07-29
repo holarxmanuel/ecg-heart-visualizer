@@ -506,6 +506,91 @@ async function main() {
 
   await installedPage.close();
 
+  // ---- controls must not depend on the server when running locally -----
+  console.log('\nOffline controls (installed app, no server)');
+  console.log('-'.repeat(74));
+
+  const offlinePage = await browser.newPage();
+  await offlinePage.setViewport({ width: 1400, height: 900 });
+  await offlinePage.evaluateOnNewDocument(() => {
+    const real = window.matchMedia.bind(window);
+    window.matchMedia = (q) =>
+      q.includes('display-mode: standalone')
+        ? { matches: true, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }
+        : real(q);
+  });
+  const offlineFailedReqs = [];
+  offlinePage.on('requestfailed', (r) => offlineFailedReqs.push(r.url()));
+
+  await offlinePage.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await offlinePage.waitForFunction('window.__ecg !== undefined', { timeout: 90000, polling: 500 });
+  await offlinePage.evaluate(() => {
+    window.__ecg.heart.enabled = false;
+  });
+
+  await offlinePage.evaluate(() => document.getElementById('mode-offline').click());
+  await sleep(2000);
+
+  const sockClosed = await offlinePage.evaluate(() => window.__ecg.link.conn.connected);
+  check('offline mode closes the socket', sockClosed === false);
+
+  // Sliders must drive the local engine and must not call the API.
+  offlineFailedReqs.length = 0;
+  await offlinePage.evaluate(() => {
+    const s = document.getElementById('sim-bpm');
+    s.value = 95;
+    s.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await sleep(1500);
+  const simCfg = await offlinePage.evaluate(() => window.__ecg.engine.simConfig.bpm);
+  const sliderToast = await offlinePage.evaluate(
+    () => document.getElementById('toast-body')?.textContent || ''
+  );
+  check('slider drives the local engine', simCfg === 95, `engine bpm=${simCfg}`);
+  check('slider raises no fetch error', !/fetch|failed/i.test(sliderToast), `"${sliderToast}"`);
+
+  // Pause must actually pause.
+  await offlinePage.evaluate(() => document.getElementById('btn-start').click());
+  await sleep(1500);
+  const pausedState = await offlinePage.evaluate(() => ({
+    paused: window.__ecg.engine.paused,
+    label: document.getElementById('btn-start-label').textContent,
+    toast: document.getElementById('toast-body')?.textContent || '',
+  }));
+  check('Pause pauses the local engine', pausedState.paused === true);
+  check('button reads Resume', pausedState.label === 'Resume', pausedState.label);
+  check('Pause raises no fetch error', !/fetch|failed/i.test(pausedState.toast), `"${pausedState.toast}"`);
+
+  await offlinePage.evaluate(() => document.getElementById('btn-start').click());
+  await sleep(1200);
+  const resumed = await offlinePage.evaluate(() => window.__ecg.engine.paused);
+  check('Resume resumes', resumed === false);
+
+  // Nothing at all should have gone to the network.
+  offlineFailedReqs.length = 0;
+  await sleep(5000);
+  check(
+    'no network requests while offline',
+    offlineFailedReqs.length === 0,
+    offlineFailedReqs.slice(0, 2).join(', ')
+  );
+
+  // The session clock must not sit at 00:00 -- it used to start only when the
+  // user picked a source by hand.
+  const elapsed = await offlinePage.$eval('#stat-elapsed', (el) => el.textContent.trim());
+  check('session clock is running', elapsed !== '00:00', `"${elapsed}"`);
+
+  // BPM slider range must cover the simulator's range, or 60 BPM renders as an
+  // empty track and reads as zero.
+  const range = await offlinePage.evaluate(() => {
+    const s = document.getElementById('sim-bpm');
+    return { min: Number(s.min), max: Number(s.max), value: Number(s.value) };
+  });
+  check('BPM slider spans the simulator range', range.min <= 30 && range.max >= 200,
+        `${range.min}-${range.max}`);
+
+  await offlinePage.close();
+
   // ---- PWA metadata ----------------------------------------------------
   console.log('\nPWA installability');
   console.log('-'.repeat(74));
