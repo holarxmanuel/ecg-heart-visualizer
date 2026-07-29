@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="h-full overflow-x-hidden">
+<html lang="en" class="overflow-x-hidden">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -22,7 +22,7 @@
     <title>ECG Heart Visualizer</title>
   </head>
 
-  <body class="h-full bg-ink-900 text-slate-200 font-display antialiased overflow-x-hidden">
+  <body class="min-h-screen bg-ink-900 text-slate-200 font-display antialiased overflow-x-hidden">
     <!-- ================= boot overlay ================= -->
     <div
       id="boot"
@@ -39,7 +39,14 @@
       </div>
     </div>
 
-    <div id="app" class="flex min-h-full flex-col">
+    <!-- On large screens the whole dashboard is pinned to the viewport so the
+         heart and the waveform are visible together. Below lg it reverts to
+         normal document flow and scrolls, because on a phone stacking and
+         scrolling is the right behaviour. -->
+    <div
+      id="app"
+      class="flex min-h-screen flex-col lg:h-screen lg:h-[100dvh] lg:min-h-0 lg:overflow-hidden"
+    >
       <!-- ================= banners ================= -->
       <!-- Connection loss. Says exactly what stopped and what did not, because
            "offline" alone leaves the user guessing whether the trace on screen
@@ -75,7 +82,7 @@
       </div>
       <!-- ================= header ================= -->
       <header
-        class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-white/5 bg-ink-800/70 px-4 py-2.5 backdrop-blur"
+        class="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-white/5 bg-ink-800/70 px-4 py-2.5 backdrop-blur"
       >
         <div class="flex items-center gap-2.5">
           <span class="relative flex h-2.5 w-2.5">
@@ -175,9 +182,14 @@
       </header>
 
       <!-- ================= main: HEART IS THE HERO ================= -->
-      <main class="grid flex-1 grid-cols-1 gap-3 p-3 lg:grid-cols-[230px_minmax(0,1fr)_270px]">
+      <!-- min-h-0 is load-bearing: a grid/flex child defaults to min-height:auto,
+           so without it the tallest column (the right-hand controls) sets the
+           row height and pushes the waveform off the bottom of the screen. -->
+      <main
+        class="grid flex-1 grid-cols-1 gap-3 p-3 lg:min-h-0 lg:grid-cols-[230px_minmax(0,1fr)_270px] lg:overflow-hidden"
+      >
         <!-- ---------- left: vitals ---------- -->
-        <aside class="order-2 flex flex-col gap-3 lg:order-1">
+        <aside class="order-2 flex flex-col gap-3 lg:order-1 lg:min-h-0 lg:overflow-y-auto lg:pr-0.5">
           <div class="panel flex flex-col items-center py-4">
             <span class="panel-label">Heart Rate</span>
             <div class="flex items-baseline gap-1.5">
@@ -220,7 +232,7 @@
 
         <!-- ---------- centre: THE HEART ---------- -->
         <section
-          class="panel order-1 relative flex min-h-[46vh] items-center justify-center overflow-hidden p-0 lg:order-2 lg:min-h-[54vh]"
+          class="panel order-1 relative flex min-h-[46vh] items-center justify-center overflow-hidden p-0 lg:order-2 lg:min-h-[260px]"
         >
           <div class="heart-vignette pointer-events-none absolute inset-0 z-0"></div>
 
@@ -244,7 +256,7 @@
         </section>
 
         <!-- ---------- right: controls ---------- -->
-        <aside class="order-3 flex flex-col gap-3">
+        <aside class="order-3 flex flex-col gap-3 lg:min-h-0 lg:overflow-y-auto lg:pr-0.5">
           <!-- source selection -->
           <div class="panel py-3">
             <span class="panel-label mb-2 block">Signal Source</span>
@@ -348,7 +360,7 @@
       </main>
 
       <!-- ================= waveform, below the heart ================= -->
-      <section class="px-3 pb-3">
+      <section class="shrink-0 px-3 pb-3">
         <div class="panel relative overflow-hidden p-0">
           <div class="flex items-center justify-between border-b border-white/5 px-3 py-1.5">
             <div class="flex items-center gap-3 font-mono text-[10px] uppercase tracking-widest text-slate-500">
@@ -365,11 +377,14 @@
             </div>
             <div id="filter-info" class="font-mono text-[10px] text-slate-600"></div>
           </div>
-          <canvas id="ecg-canvas" class="block h-[200px] w-full sm:h-[230px]"></canvas>
+          <canvas
+            id="ecg-canvas"
+            class="block h-[200px] w-full sm:h-[230px] lg:h-[26vh] lg:max-h-[230px] lg:min-h-[150px]"
+          ></canvas>
         </div>
       </section>
 
-      <footer class="px-4 pb-3 font-mono text-[10px] leading-relaxed text-slate-600">
+      <footer class="shrink-0 px-4 pb-3 font-mono text-[10px] leading-relaxed text-slate-600">
         <span id="footer-source">Simulated AD8232 · Arduino Uno R3 · 1000 Hz</span>
         <span class="mx-2 text-slate-700">|</span>
         <span id="footer-hint">Not a medical device. For education and development only.</span>

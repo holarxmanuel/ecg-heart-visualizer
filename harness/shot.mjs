@@ -5,8 +5,10 @@ await p.setViewport({width: 1000, height: 1000, deviceScaleFactor: 1});
 const errs=[]; p.on('pageerror',e=>errs.push(e.message)); p.on('console',m=>{if(m.type()==='error')errs.push(m.text());});
 await p.goto('http://localhost:8000?quality=high',{waitUntil:'domcontentloaded'});
 await p.waitForFunction('window.__ecg!==undefined',{timeout:120000,polling:500});
-// Force full detail even though this box has no GPU -- we are judging looks, not speed.
-await p.evaluate(()=>{ window.__ecg.heart.uniforms.uDetail.value = 1.0; });
+// Force full detail even though this box has no GPU -- we are judging looks,
+// not speed. Optional: the uniform only exists in shader revisions that have a
+// detail switch, so tolerate its absence rather than aborting the capture.
+await p.evaluate(()=>{ const u=window.__ecg.heart.uniforms; if (u && u.uDetail) u.uDetail.value = 1.0; });
 await p.evaluate(()=>window.__ecg.link.useLocal('simulate'));
 await new Promise(r=>setTimeout(r,6000));
 // Drive the model to mid-diastole so the chambers are full and rounded.

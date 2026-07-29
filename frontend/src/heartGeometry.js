@@ -126,7 +126,10 @@ const CENTER = [0.0, 0.02, 0.0]; // interior point every surface ray starts from
 /** Anterior interventricular groove: base of the pulmonary trunk to the apex. */
 const IV_GROOVE = {
   a: [-0.02, 0.29, 0.17],
-  b: [0.22, -0.53, 0.08],
+  // Tracks the apex: the groove separates the ventricles all the way down to
+  // it, so moving one without the other leaves the furrow running off the
+  // side of the heart.
+  b: [0.10, -0.50, 0.07],
   r: 0.052,
 };
 
@@ -143,28 +146,48 @@ function heartSDF(x, y, z) {
   // --- left ventricle: the long cone that carries the apex ---------------
   // The apex is blunt, not needle-sharp: a real one is a rounded point you
   // could rest a thumb on. Tapering to a fine tip reads as a tail.
-  let d = sdRoundCone(x, y, z, 0.02, 0.32, -0.03, 0.25, -0.60, 0.06, 0.325, 0.095);
+  //
+  // It sits only slightly right of centre. Anatomically the apex points well
+  // to the patient's left, but pushed that far the silhouette stops reading
+  // as a heart: one side ends in a rounded lobe while the other runs on into
+  // a spike, and the outline turns into a boot. Bringing it back toward the
+  // midline gives the inverted-triangle shape people recognise while keeping
+  // the tilt that says which way round the organ is.
+  let d = sdRoundCone(x, y, z, 0.02, 0.32, -0.03, 0.11, -0.545, 0.05, 0.325, 0.068);
 
   // Thicken the LV's upper two thirds -- the muscular mass is greatest at the
   // base. Elongated in y so the ventricle stays conical rather than spherical.
-  d = smin(d, sdEllipsoid(x, y, z, 0.07, 0.05, 0.00, 0.265, 0.345, 0.245), 0.13);
+  // Raised and shortened relative to the cone so the widest point sits high
+  // and the taper below it is long: that contrast is what makes a heart
+  // silhouette rather than an egg.
+  d = smin(d, sdEllipsoid(x, y, z, 0.07, 0.13, 0.00, 0.243, 0.295, 0.235), 0.13);
 
   // --- right ventricle: anterior, to the viewer's left, thinner ----------
   // A tighter blend (k = 0.11) leaves a shallow crease where the two
   // ventricles meet, which is where the LAD will sit.
-  d = smin(d, sdEllipsoid(x, y, z, -0.18, 0.00, 0.11, 0.265, 0.345, 0.225), 0.11);
+  d = smin(d, sdEllipsoid(x, y, z, -0.17, 0.13, 0.11, 0.243, 0.290, 0.215), 0.11);
+
+  // The RV has to taper toward the apex as well. Without this it ends in a
+  // rounded lobe while the LV runs on alone -- the two sides of the outline
+  // do different things and the shape looks lopsided rather than pointed.
+  d = smin(d, sdRoundCone(x, y, z, -0.15, 0.20, 0.10, 0.07, -0.470, 0.06, 0.250, 0.068), 0.12);
 
   // RV outflow tract (infundibulum), rising to the pulmonary valve.
   d = smin(d, sdRoundCone(x, y, z, -0.16, 0.12, 0.14, -0.12, 0.36, 0.14, 0.185, 0.125), 0.09);
 
   // --- atria -------------------------------------------------------------
-  d = smin(d, sdEllipsoid(x, y, z, -0.27, 0.39, -0.02, 0.245, 0.225, 0.225), 0.10);
-  d = smin(d, sdEllipsoid(x, y, z, 0.11, 0.43, -0.17, 0.235, 0.195, 0.215), 0.10);
+  // Widened and dropped slightly so the broadest part of the organ sits in the
+  // upper third. That is what gives the outline its shoulders: with the widest
+  // point down at mid-ventricle the shape reads as a pear, and only once the
+  // mass moves up does the long taper below it read as an apex.
+  d = smin(d, sdEllipsoid(x, y, z, -0.29, 0.36, -0.02, 0.290, 0.235, 0.235), 0.10);
+  d = smin(d, sdEllipsoid(x, y, z, 0.14, 0.40, -0.16, 0.275, 0.210, 0.225), 0.10);
 
   // Auricles (atrial appendages). Small, forward-pointing, and the single
-  // most recognisable "this is a real heart, not a symbol" detail.
-  d = smin(d, sdEllipsoid(x, y, z, 0.27, 0.33, 0.08, 0.125, 0.085, 0.105), 0.055);
-  d = smin(d, sdEllipsoid(x, y, z, -0.34, 0.43, 0.09, 0.115, 0.095, 0.10), 0.055);
+  // most recognisable "this is a real heart, not a symbol" detail. Pushed
+  // further out to either side, where they round off the two shoulders.
+  d = smin(d, sdEllipsoid(x, y, z, 0.33, 0.31, 0.08, 0.140, 0.100, 0.115), 0.060);
+  d = smin(d, sdEllipsoid(x, y, z, -0.40, 0.40, 0.09, 0.130, 0.105, 0.110), 0.060);
 
   // --- grooves -----------------------------------------------------------
   // Coronary sulcus: the circumferential furrow at the AV plane, carved as a
@@ -269,50 +292,23 @@ const rgb = (hex) => {
   return [s2l(r), s2l(g), s2l(b)];
 };
 
-/*
- * Palette: a wet anatomical specimen under studio light.
- *
- * Two earlier attempts bracketed this. A dark, brownish cadaver reading was
- * accurate but looked grim on a near-black dashboard; a bright flat
- * illustration was legible but plastic. The target sits between them: rich
- * brick red, clearly lit, and above all *wet* -- the broad glossy highlight is
- * what makes a real specimen photograph the way it does, more than any colour
- * choice.
- *
- * Vessel colour follows oxygenation, as anatomy demands, but in the muted
- * slate a real vessel wall shows rather than textbook primaries.
- */
 const COLOR = {
-  // Rich brick red. Bright enough to read against a dark panel, desaturated
-  // enough not to look like a cartoon.
-  muscle: rgb(0x9c3128),
-  muscleDeep: rgb(0x531711),
-
-  // Epicardial fat is prominent on a real heart and the reference shows it
-  // clearly: lobulated cream-yellow deposits packing the grooves. An earlier
-  // version reduced it almost to nothing, which removed one of the strongest
-  // cues that this is tissue and not a moulded shape.
-  fat: rgb(0xc9a469),
-
-  // The aorta is muscular and dark; the pulmonary trunk and the venae cavae
-  // carry deoxygenated blood and show as slate blue-grey. That the pulmonary
-  // ARTERY is blue is the detail that proves the model knows its anatomy.
-  aorta: rgb(0x8f3a30),
-  pulmonary: rgb(0x4d5d78),
-  vein: rgb(0x475872),
-  coronary: rgb(0x9b2c22),
+  // Fresh myocardium is a deep brownish red -- darker and far less saturated
+  // than the "valentine" red people expect. The realism lives in this choice.
+  muscle: rgb(0x8c3229),
+  muscleDeep: rgb(0x4d1613),
+  // Epicardial fat packs the grooves of every adult heart. Muted rather than
+  // cream -- at full brightness it stops reading as tissue and becomes a
+  // painted stripe.
+  fat: rgb(0xb09868),
+  // Great vessels are paler, greyer and less saturated than muscle -- but not
+  // white. Tone mapping plus the environment map lift these noticeably, so
+  // they are authored darker than they should look.
+  aorta: rgb(0x8a7266),
+  pulmonary: rgb(0x866962),
+  vein: rgb(0x5d5e73), // venae cavae carry a distinctly bluish cast
+  coronary: rgb(0x8e2620),
 };
-
-/**
- * Epicardial fat, linear RGB.
- *
- * Exported because the fat is blended per PIXEL in the fragment shader rather
- * than baked into the vertex colour -- a baked blend can only vary as fast as
- * the mesh, so its boundary traced the triangles. The shader therefore needs
- * the colour as a uniform, and it has to come from here so there is still one
- * definition of it.
- */
-export const FAT_COLOR_LINEAR = COLOR.fat;
 
 /** How much epicardial fat sits here (0 = bare muscle, 1 = full fat pad). */
 function fatWeight(x, y, z) {
@@ -341,15 +337,7 @@ function fatWeight(x, y, z) {
   const nearIvg = ramp(ivgDist, 0.20);
   // Atrial walls are thin enough to look paler than ventricular muscle.
   const atrial = clamp((y - AV_PLANE_Y - 0.02) / 0.20, 0, 1) * 0.26;
-  // Scaled well down from where it was. Anatomically the fat sits *in* the
-  // grooves; letting it spread across the anterior free wall is what turned it
-  // into a belt drawn round the heart. It should be a change in tissue tone
-  // along the sulci, not a band.
-  // Weighted back up. The reference shows substantial fat packing the AV and
-  // interventricular grooves, and it is one of the strongest cues that this is
-  // tissue rather than a moulded shape -- the previous near-zero setting threw
-  // that away to cure a stripe artifact that belonged to the shader instead.
-  return clamp(Math.max(nearSulcus * 0.62, nearIvg * 0.50) + atrial * 0.30, 0, 1);
+  return clamp(Math.max(nearSulcus * 0.44, nearIvg * 0.30) + atrial * 0.7, 0, 1);
 }
 
 /** 1 where the ventricles squeeze, 0 at the atria -- drives the vertex shader. */
@@ -383,15 +371,6 @@ function buildBody(detail) {
   const colors = new Float32Array(count * 3);
   // aWeights: x = ventricular contraction, y = atrial contraction, z = vessel
   const weights = new Float32Array(count * 3);
-  // aSurf: x = epicardial fat weight, y = ambient occlusion, z = tissue id
-  //        (0 = myocardium, 0.5 = coronary on muscle, 1 = free great vessel)
-  //
-  // These used to be folded into the vertex colour. They are carried raw now
-  // so the fragment shader can blend them per PIXEL. Blending per vertex and
-  // interpolating is what produced the sawtooth along the fat pad: the ramp
-  // could only ever be as smooth as the mesh, so its edge traced the
-  // triangles. Per pixel there is no topology for it to follow.
-  const surf = new Float32Array(count * 3);
 
   const n = [0, 0, 0];
 
@@ -414,15 +393,28 @@ function buildBody(detail) {
     normals[i * 3 + 2] = n[2];
 
     // --- colour ---------------------------------------------------------
-    // Base myocardium only. Fat, occlusion, mottling, fibre striation and the
-    // epicardial veins are all applied per pixel in the fragment shader.
-    colors[i * 3] = COLOR.muscle[0];
-    colors[i * 3 + 1] = COLOR.muscle[1];
-    colors[i * 3 + 2] = COLOR.muscle[2];
+    const fat = fatWeight(x, y, z);
+    // Depth-of-red variation so the muscle is not a flat plastic tone.
+    const mottle =
+      0.5 +
+      0.5 *
+        Math.sin(x * 21.0 + y * 13.0) *
+        Math.sin(y * 17.0 + z * 11.0) *
+        Math.sin(z * 19.0 + x * 7.0);
 
-    surf[i * 3] = fatWeight(x, y, z);
-    surf[i * 3 + 1] = ao;
-    surf[i * 3 + 2] = 0;
+    let r = mix(COLOR.muscleDeep[0], COLOR.muscle[0], mottle);
+    let g = mix(COLOR.muscleDeep[1], COLOR.muscle[1], mottle);
+    let b = mix(COLOR.muscleDeep[2], COLOR.muscle[2], mottle);
+
+    r = mix(r, COLOR.fat[0], fat);
+    g = mix(g, COLOR.fat[1], fat);
+    b = mix(b, COLOR.fat[2], fat);
+
+    // Fold baked occlusion straight into vertex colour: one attribute, no
+    // second UV set, no aoMap texture, and it costs the GPU nothing.
+    colors[i * 3] = r * ao;
+    colors[i * 3 + 1] = g * ao;
+    colors[i * 3 + 2] = b * ao;
 
     weights[i * 3] = contractionWeight(y);
     weights[i * 3 + 1] = atrialWeight(y);
@@ -434,7 +426,6 @@ function buildBody(detail) {
   geo.setAttribute('normal', new BufferAttribute(normals, 3));
   geo.setAttribute('color', new BufferAttribute(colors, 3));
   geo.setAttribute('aWeights', new BufferAttribute(weights, 3));
-  geo.setAttribute('aSurf', new BufferAttribute(surf, 3));
   geo.setIndex(sphere.getIndex());
   sphere.dispose();
   return geo;
@@ -587,8 +578,6 @@ function buildTube(spec, { snap = false, tubular = 44, radial = 9, lift = 0.007 
   const count = pos.count;
   const colors = new Float32Array(count * 3);
   const weights = new Float32Array(count * 3);
-  // Same surface channels as the body, so one shader covers both.
-  const surf = new Float32Array(count * 3);
 
   const taper = spec.taper || null;
   const color = spec.color || COLOR.coronary;
@@ -628,16 +617,11 @@ function buildTube(spec, { snap = false, tubular = 44, radial = 9, lift = 0.007 
     // Reuse the body's AO bake so vessels darken where they tuck behind the
     // atria. Without it they read as stickers pasted on top of the organ.
     const ao = bakeAO(x, y, z, nrm.getX(i), nrm.getY(i), nrm.getZ(i));
+    const shade = mix(0.68, 1.0, ao);
 
-    colors[i * 3] = color[0];
-    colors[i * 3 + 1] = color[1];
-    colors[i * 3 + 2] = color[2];
-
-    // Vessels carry no fat pad; the tissue id keeps the muscle-only detail
-    // (fibre striation, epicardial veins) off them.
-    surf[i * 3] = 0;
-    surf[i * 3 + 1] = ao;
-    surf[i * 3 + 2] = snap ? 0.5 : 1.0;
+    colors[i * 3] = color[0] * shade;
+    colors[i * 3 + 1] = color[1] * shade;
+    colors[i * 3 + 2] = color[2] * shade;
 
     // Coronaries ride on the myocardium, so they contract with it.
     // Free-standing great vessels only get the arterial pressure pulse.
@@ -649,13 +633,23 @@ function buildTube(spec, { snap = false, tubular = 44, radial = 9, lift = 0.007 
   geo.deleteAttribute('uv');
   geo.setAttribute('color', new BufferAttribute(colors, 3));
   geo.setAttribute('aWeights', new BufferAttribute(weights, 3));
-  geo.setAttribute('aSurf', new BufferAttribute(surf, 3));
   return geo;
 }
 
 // ---------------------------------------------------------------------------
 // Assembly
 // ---------------------------------------------------------------------------
+
+/** Furthest vertex distance from the origin -- invariant under rotation. */
+function enclosingRadius(geometry) {
+  const p = geometry.attributes.position.array;
+  let max = 0;
+  for (let i = 0; i < p.length; i += 3) {
+    const d = p[i] * p[i] + p[i + 1] * p[i + 1] + p[i + 2] * p[i + 2];
+    if (d > max) max = d;
+  }
+  return Math.sqrt(max);
+}
 
 /** Merge geometries that share an attribute set into one draw call. */
 function mergeAll(geos) {
@@ -670,7 +664,6 @@ function mergeAll(geos) {
   const normal = new Float32Array(vTotal * 3);
   const color = new Float32Array(vTotal * 3);
   const weights = new Float32Array(vTotal * 3);
-  const surf = new Float32Array(vTotal * 3);
   const index = vTotal > 65535 ? new Uint32Array(iTotal) : new Uint16Array(iTotal);
 
   let vOff = 0;
@@ -681,7 +674,6 @@ function mergeAll(geos) {
     normal.set(g.attributes.normal.array, vOff * 3);
     color.set(g.attributes.color.array, vOff * 3);
     weights.set(g.attributes.aWeights.array, vOff * 3);
-    surf.set(g.attributes.aSurf.array, vOff * 3);
 
     if (g.index) {
       const src = g.index.array;
@@ -700,7 +692,6 @@ function mergeAll(geos) {
   merged.setAttribute('normal', new BufferAttribute(normal, 3));
   merged.setAttribute('color', new BufferAttribute(color, 3));
   merged.setAttribute('aWeights', new BufferAttribute(weights, 3));
-  merged.setAttribute('aSurf', new BufferAttribute(surf, 3));
   merged.setIndex(new BufferAttribute(index, 1));
   return merged;
 }
@@ -775,6 +766,22 @@ export function buildHeartGeometry(quality = 'medium') {
       // The AV plane in normalised space: the shader shortens the ventricles
       // along their long axis toward it.
       basePlaneY: (AV_PLANE_Y - centre[1]) * scale,
+      // Extent in normalised space, so the camera can frame the organ from
+      // what was actually built rather than from a hand-tuned field of view
+      // that silently starts clipping the aortic arch whenever the geometry
+      // changes.
+      bounds: {
+        min: geometry.boundingBox.min.toArray(),
+        max: geometry.boundingBox.max.toArray(),
+        radius: geometry.boundingSphere.radius,
+        // Distance from the ORIGIN to the furthest vertex, not the radius of
+        // the tightest enclosing sphere. The mesh sits in a group that is
+        // tilted anatomically and that the user can drag to rotate, both about
+        // the origin -- so this is the only measure that stays correct at
+        // every angle. A bounding box would be right for the rest pose and
+        // wrong the moment anyone turns it.
+        enclosing: enclosingRadius(geometry),
+      },
     },
   };
 }
