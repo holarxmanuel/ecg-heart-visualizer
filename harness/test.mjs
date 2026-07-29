@@ -16,6 +16,10 @@
 import puppeteer from 'puppeteer';
 
 const BASE = process.env.ECG_URL || 'http://localhost:8000';
+// Several rules depend on whether the target counts as "your own machine".
+// Assert the rule, not a fixed outcome, so the suite is valid against both
+// localhost and the public deployment.
+const BASE_IS_LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(BASE);
 // A non-localhost origin, used to assert the mode toggle is locked there.
 const PUBLIC_URL = process.env.ECG_PUBLIC_URL || 'http://143.198.27.18:8000';
 
@@ -299,10 +303,15 @@ async function main() {
   check('indicator reads Internet when connected', netOn.label === 'Internet', `"${netOn.label}"`);
   check('indicator dot is green', netOn.dot.includes('trace-ecg'), netOn.dot);
 
-  // localhost counts as "your own machine", so the toggle is unlocked here.
-  // The locked case is asserted separately against the public host below.
+  // localhost counts as "your own machine", so the toggle is unlocked there
+  // and locked on a hosted origin. Both are correct; which one applies depends
+  // on the target.
   const modeState = await page.evaluate(() => window.__ecg.modeState);
-  check('localhost can toggle mode', modeState.canToggle === true, `canToggle=${modeState.canToggle}`);
+  check(
+    BASE_IS_LOCAL ? 'localhost can toggle mode' : 'hosted origin locks the mode toggle',
+    modeState.canToggle === BASE_IS_LOCAL,
+    `canToggle=${modeState.canToggle} (target ${BASE_IS_LOCAL ? 'local' : 'hosted'})`
+  );
   check('defaults to online', modeState.mode === 'online', modeState.mode);
 
   // ---- immediate reaction to losing the network ------------------------
@@ -381,7 +390,7 @@ async function main() {
   console.log('\nHosted site in a browser tab (mode locked to Online)');
   console.log('-'.repeat(74));
 
-  if (PUBLIC_URL) {
+  if (PUBLIC_URL && BASE_IS_LOCAL) {
     const tabPage = await browser.newPage();
     await tabPage.setViewport({ width: 1400, height: 900 });
     await tabPage.goto(PUBLIC_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -413,7 +422,7 @@ async function main() {
 
     await tabPage.close();
   } else {
-    console.log('  SKIP  no PUBLIC_URL set');
+    console.log('  SKIP  target is already a hosted origin (asserted above)');
   }
 
   // ---- installed app ----------------------------------------------------
@@ -545,11 +554,22 @@ async function main() {
     const res = await fetch('/api/update/apply', { method: 'POST' });
     return { status: res.status, body: await res.json().catch(() => ({})) };
   });
-  check(
-    'self-update endpoint reachable from localhost',
-    guard.status === 200 || guard.status === 500,
-    `HTTP ${guard.status}: ${(guard.body.error || 'ok').slice(0, 70)}`
-  );
+  // The endpoint runs git and npm on the host, so it must refuse anyone who is
+  // not on loopback. From localhost it should get through (and then decline on
+  // its own terms, e.g. a dirty tree); from a hosted origin it must be 403.
+  if (BASE_IS_LOCAL) {
+    check(
+      'self-update reachable from loopback',
+      guard.status === 200 || guard.status === 500,
+      `HTTP ${guard.status}: ${(guard.body.error || 'ok').slice(0, 60)}`
+    );
+  } else {
+    check(
+      'self-update REFUSED from a remote origin',
+      guard.status === 403,
+      `HTTP ${guard.status}: ${(guard.body.error || '').slice(0, 60)}`
+    );
+  }
 
   // ---- Web Serial surface ----------------------------------------------
   console.log('\nWeb Serial (no hardware attached)');

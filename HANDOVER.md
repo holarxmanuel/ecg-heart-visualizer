@@ -1,6 +1,6 @@
 # PROJECT HANDOVER — Real-Time ECG Heart Visualizer
 
-**Written:** 2026-07-27 · **Updated:** 2026-07-29 (server build-out complete)
+**Written:** 2026-07-27 · **Updated:** 2026-07-29 (modes, HTTPS, heart surface)
 
 ---
 
@@ -13,7 +13,10 @@ changed since the migration:
 |---|---|---|
 | Always-on service | **Done** | systemd `ecg-backend`, restarts on any exit |
 | Reachable on the network | **Done** | `HOST=0.0.0.0`, Caddy on 80/443 |
-| HTTPS / secure context | **Config done, blocked** | see Part 0.1 |
+| HTTPS / secure context | **Done, via tunnel** | see Part 0.1 |
+| Online/offline mode toggle | **Done** | locked in a tab, free once installed |
+| Live connectivity indicator | **Done** | reacts without a refresh |
+| Heart surface realism | **Reworked** | per-pixel tissue, relief, lighting |
 | JS DSP port (offline) | **Done, bit-exact** | `verify_dsp.py` — 0.000e+00 V max diff |
 | Local engine | **Done** | emits the server's exact wire format |
 | PWA / offline | **Done, verified** | boots and beats with the network OFF |
@@ -30,25 +33,37 @@ changed since the migration:
 Test results: `selftest.py` 20/20 · `verify_dsp.py` all pass · `smoketest.py`
 all pass · browser harness **42/42**.
 
-## 0.1 The one outstanding blocker
+## 0.1 HTTPS, and the firewall
 
-**Ports 80 and 443 are blocked by the DigitalOcean cloud firewall.**
+**Ports 80 and 443 are blocked upstream** (8000 and 22 get through). The host
+firewall is wide open, so it is a cloud firewall. ACME connects to those exact
+port numbers and neither is configurable, so Let's Encrypt cannot validate
+however Caddy is set up.
 
-The host firewall is wide open (`iptables` INPUT ACCEPT, ufw inactive) and
-Caddy is listening correctly, but three independent external vantage points
-(Let's Encrypt's validator, allorigins, r.jina.ai) all time out. Only 22 gets
-through. This cannot be fixed from inside the droplet.
+**Resolved with a Cloudflare tunnel** (`ecg-tunnel.service`), which dials
+outbound and so needs no inbound port at all. It terminates TLS on Cloudflare's
+edge with a certificate browsers already trust, which restores the secure
+context Web Serial and service workers both require.
 
-Fix it in the DigitalOcean panel → Networking → Firewalls → inbound TCP 80 and
-443 from all sources. Caddy retries automatically; the certificate will appear
-without further action.
+`GET /api/access` reports the current secure URL, and the app links to it from
+the insecure origin rather than leaving two dead buttons.
 
-**Until then:** the site is reachable at `http://143.198.27.18:8000` and
-everything works *except* Web Serial and PWA install, both of which require a
-secure context. Locally (`http://localhost:8000`) all features work, because
-localhost is exempt.
+**Caveat worth acting on:** a free quick tunnel's hostname is random and
+changes on restart. An installed app's identity is its origin, so a changed
+hostname orphans installed copies. Either open 80/443 (Caddy is still
+configured for `143-198-27-18.nip.io` and will pick up a certificate by
+itself), or run a named tunnel against a Cloudflare account.
 
-## 0.2 Where the architecture went
+## 0.2 The half-open socket
+
+Worth knowing because it will come back in any networked rewrite. A WebSocket
+stays in `readyState OPEN` long after its network has gone — TCP only finds
+out when a send fails — so reconnect logic guarded on "am I connected?"
+declines to act and the app stays in fallback permanently. Liveness now comes
+from the ping/pong that already existed: three unanswered pings condemns the
+socket, and the rebuild does not consult `readyState` at all.
+
+## 0.3 Where the architecture went
 
 The `ECGSource` abstraction absorbed the new requirement exactly as intended —
 `ClientFedSource` is a third implementation, not a special case. The genuinely
