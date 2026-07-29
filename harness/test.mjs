@@ -16,6 +16,8 @@
 import puppeteer from 'puppeteer';
 
 const BASE = process.env.ECG_URL || 'http://localhost:8000';
+// A non-localhost origin, used to assert the mode toggle is locked there.
+const PUBLIC_URL = process.env.ECG_PUBLIC_URL || 'http://143.198.27.18:8000';
 
 let pass = 0;
 let fail = 0;
@@ -271,6 +273,229 @@ async function main() {
   }
 
   await page.setOfflineMode(false);
+
+
+  // ---- mode switch + connectivity indicator ----------------------------
+  console.log('\nMode switch and connectivity indicator');
+  console.log('-'.repeat(74));
+
+  // Put the link back on the server and wait for it: earlier sections left it
+  // local and offline, and asserting before the socket reconnects would be
+  // testing the harness's timing rather than the app.
+  await page.evaluate(() => window.__ecg.link.useServer());
+  await page.waitForFunction('window.__ecg.linkState.serverUp === true', {
+    timeout: 40000,
+    polling: 300,
+  });
+  await page.waitForFunction("window.__ecg.linkState.mode === 'server'", {
+    timeout: 20000,
+    polling: 300,
+  });
+
+  const netOn = await page.evaluate(() => ({
+    label: document.getElementById('net-label').textContent.trim(),
+    dot: document.getElementById('net-dot').className,
+  }));
+  check('indicator reads Internet when connected', netOn.label === 'Internet', `"${netOn.label}"`);
+  check('indicator dot is green', netOn.dot.includes('trace-ecg'), netOn.dot);
+
+  // localhost counts as "your own machine", so the toggle is unlocked here.
+  // The locked case is asserted separately against the public host below.
+  const modeState = await page.evaluate(() => window.__ecg.modeState);
+  check('localhost can toggle mode', modeState.canToggle === true, `canToggle=${modeState.canToggle}`);
+  check('defaults to online', modeState.mode === 'online', modeState.mode);
+
+  // ---- immediate reaction to losing the network ------------------------
+  console.log('\nImmediate reaction to losing the network (no refresh)');
+  console.log('-'.repeat(74));
+
+  await page.setOfflineMode(true);
+
+  // No reload: the indicator must flip on its own, and fast.
+  const flipped = await page
+    .waitForFunction(
+      "document.getElementById('net-label').textContent.trim() === 'No internet'",
+      { timeout: 8000, polling: 100 }
+    )
+    .then(() => true)
+    .catch(() => false);
+  check('indicator flips to "No internet" without a refresh', flipped);
+
+  const netOff = await page.evaluate(() => ({
+    dot: document.getElementById('net-dot').className,
+    serialDisabled: document.getElementById('btn-serial').disabled,
+    portsDisabled: document.getElementById('btn-refresh-ports').disabled,
+    greyed: document.getElementById('btn-serial').classList.contains('needs-net-off'),
+    simSliderDisabled: document.getElementById('sim-bpm').disabled,
+  }));
+  check('indicator dot turns red', netOff.dot.includes('trace-alert'), netOff.dot);
+  check('server-side sensor controls disabled', netOff.serialDisabled && netOff.portsDisabled);
+  check('disabled controls visibly greyed', netOff.greyed);
+  check('simulation sliders stay usable offline', netOff.simSliderDisabled === false);
+
+  const degraded = await page.evaluate(() => window.__ecg.linkState);
+  check('switched to local processing', degraded.local === true, degraded.mode);
+  check('marked as degraded, not a user choice', degraded.degraded === true);
+
+  const linkLabelOff = await page.$eval('#link-label', (el) => el.textContent.trim());
+  check('link pill says it is a fallback', /fallback/i.test(linkLabelOff), `"${linkLabelOff}"`);
+
+  // The trace must keep moving. Assert on the LOCAL engine's own counter:
+  // state.samples restarts at zero when the source swaps (a new acquisition
+  // session, exactly as a server-side source swap behaves), so it cannot be
+  // compared against the pre-drop figure.
+  await page.waitForFunction('window.__ecg.engine.samplesTotal > 2000', {
+    timeout: 30000,
+    polling: 300,
+  });
+  const kept = await page.evaluate(() => window.__ecg.engine.samplesTotal);
+  check('kept streaming locally after the drop', kept > 2000, `${kept} samples locally`);
+
+  // ---- recovery ---------------------------------------------------------
+  console.log('\nRecovery when the network returns');
+  console.log('-'.repeat(74));
+
+  await page.setOfflineMode(false);
+  const recovered = await page
+    .waitForFunction(
+      "document.getElementById('net-label').textContent.trim() === 'Internet'",
+      { timeout: 40000, polling: 200 }
+    )
+    .then(() => true)
+    .catch(() => false);
+  check('indicator returns to Internet', recovered);
+
+  const backOnline = await page
+    .waitForFunction("window.__ecg.linkState.mode === 'server'", { timeout: 40000, polling: 300 })
+    .then(() => true)
+    .catch(() => false);
+  check('automatically resumes server processing', backOnline);
+
+  const notDegraded = await page.evaluate(() => window.__ecg.linkState.degraded);
+  check('degraded flag cleared on recovery', notDegraded === false);
+
+  const reenabled = await page.evaluate(() => !document.getElementById('btn-serial').disabled);
+  check('network controls re-enabled', reenabled);
+
+  // ---- hosted site in a browser tab: mode must be LOCKED ---------------
+  console.log('\nHosted site in a browser tab (mode locked to Online)');
+  console.log('-'.repeat(74));
+
+  if (PUBLIC_URL) {
+    const tabPage = await browser.newPage();
+    await tabPage.setViewport({ width: 1400, height: 900 });
+    await tabPage.goto(PUBLIC_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await tabPage.waitForFunction('window.__ecg !== undefined', { timeout: 90000, polling: 500 });
+    await tabPage.evaluate(() => {
+      window.__ecg.heart.enabled = false;
+    });
+
+    const tState = await tabPage.evaluate(() => window.__ecg.modeState);
+    check('hosted tab cannot toggle mode', tState.canToggle === false, `canToggle=${tState.canToggle}`);
+    check('hosted tab is online', tState.mode === 'online', tState.mode);
+    check('lock reason explained to the user', !!tState.lockedReason,
+          (tState.lockedReason || '').slice(0, 46) + '…');
+
+    const tBtns = await tabPage.evaluate(() => ({
+      onlineDisabled: document.getElementById('mode-online').disabled,
+      offlineDisabled: document.getElementById('mode-offline').disabled,
+      onlineActive: document.getElementById('mode-online').classList.contains('is-active'),
+      lockVisible: document.getElementById('mode-lock').style.display !== 'none',
+    }));
+    check('both mode buttons disabled', tBtns.onlineDisabled && tBtns.offlineDisabled);
+    check('Online shown as the active mode', tBtns.onlineActive);
+    check('lock icon visible', tBtns.lockVisible);
+
+    await tabPage.evaluate(() => document.getElementById('mode-offline').click());
+    await sleep(500);
+    const afterClick = await tabPage.evaluate(() => window.__ecg.modeState.mode);
+    check('clicking Offline is refused', afterClick === 'online', afterClick);
+
+    await tabPage.close();
+  } else {
+    console.log('  SKIP  no PUBLIC_URL set');
+  }
+
+  // ---- installed app ----------------------------------------------------
+  console.log('\nInstalled app (standalone display-mode)');
+  console.log('-'.repeat(74));
+
+  const installedPage = await browser.newPage();
+  await installedPage.setViewport({ width: 1400, height: 900 });
+  // This puppeteer cannot emulate the display-mode media feature, so patch
+  // matchMedia before any app code runs. That is exactly the signal mode.js
+  // reads, so the app cannot tell the difference.
+  await installedPage.evaluateOnNewDocument(() => {
+    const real = window.matchMedia.bind(window);
+    window.matchMedia = (q) =>
+      q.includes('display-mode: standalone')
+        ? { matches: true, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} }
+        : real(q);
+  });
+  await installedPage.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await installedPage.waitForFunction('window.__ecg !== undefined', {
+    timeout: 90000,
+    polling: 500,
+  });
+  await installedPage.evaluate(() => {
+    window.__ecg.heart.enabled = false;
+  });
+
+  const iState = await installedPage.evaluate(() => window.__ecg.modeState);
+  check('installed app detected', iState.installed === true, `installed=${iState.installed}`);
+  check('installed app CAN toggle mode', iState.canToggle === true);
+
+  const iBtns = await installedPage.evaluate(() => ({
+    onlineDisabled: document.getElementById('mode-online').disabled,
+    offlineDisabled: document.getElementById('mode-offline').disabled,
+    lockVisible: document.getElementById('mode-lock').style.display !== 'none',
+  }));
+  check('mode buttons enabled when installed', !iBtns.onlineDisabled && !iBtns.offlineDisabled);
+  check('lock icon hidden when installed', !iBtns.lockVisible);
+
+  await installedPage.evaluate(() => document.getElementById('mode-offline').click());
+  await sleep(1500);
+  const iOffline = await installedPage.evaluate(() => ({
+    mode: window.__ecg.modeState.mode,
+    link: window.__ecg.linkState.mode,
+    degraded: window.__ecg.linkState.degraded,
+  }));
+  check('switched to offline mode', iOffline.mode === 'offline', iOffline.mode);
+  check('link is processing locally', iOffline.link === 'local', iOffline.link);
+  check('offline is a choice, not a degradation', iOffline.degraded === false);
+
+  const iBefore = await installedPage.evaluate(() => window.__ecg.engine.samplesTotal);
+  await installedPage.waitForFunction(
+    `window.__ecg.engine.samplesTotal > ${iBefore + 2000}`,
+    { timeout: 30000, polling: 300 }
+  );
+  check('local engine streaming in chosen offline mode', true);
+
+  // Chosen-offline must NOT be dragged back online by a reconnect.
+  await sleep(2500);
+  const stillOffline = await installedPage.evaluate(() => window.__ecg.linkState.mode);
+  check('stays offline despite a live server', stillOffline === 'local', stillOffline);
+
+  // The preference must survive a reload -- that is what makes it a setting.
+  await installedPage.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+  await installedPage.waitForFunction('window.__ecg !== undefined', {
+    timeout: 90000,
+    polling: 500,
+  });
+  await installedPage.evaluate(() => {
+    window.__ecg.heart.enabled = false;
+  });
+  const persisted = await installedPage.evaluate(() => window.__ecg.modeState.mode);
+  check('offline preference persists across reload', persisted === 'offline', persisted);
+  const persistedLink = await installedPage.evaluate(() => window.__ecg.linkState.mode);
+  check('and is applied on launch', persistedLink === 'local', persistedLink);
+
+  await installedPage.evaluate(() => document.getElementById('mode-online').click());
+  await sleep(2000);
+  const iOnline = await installedPage.evaluate(() => window.__ecg.modeState.mode);
+  check('can switch back to online', iOnline === 'online', iOnline);
+
+  await installedPage.close();
 
   // ---- PWA metadata ----------------------------------------------------
   console.log('\nPWA installability');

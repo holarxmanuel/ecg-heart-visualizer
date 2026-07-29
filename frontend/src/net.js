@@ -77,6 +77,50 @@ export class ECGConnection extends EventTarget {
     };
   }
 
+  /**
+   * Tear down whatever socket we have and open a fresh one, immediately.
+   *
+   * Deliberately does NOT trust `readyState`. A WebSocket whose network has
+   * gone away stays in OPEN for a long time -- TCP does not find out until a
+   * send fails or a keepalive expires -- so a reconnect that skips out when
+   * the socket "looks" connected will never fire, and the app stays stuck in
+   * fallback forever. That is the exact failure a dropped wifi link or a
+   * laptop waking from sleep produces.
+   */
+  forceReconnect() {
+    if (this._closedByUs) return;
+    clearTimeout(this._timer);
+    clearInterval(this._pingTimer);
+    this._retry = 0;
+
+    const old = this.ws;
+    if (old) {
+      // Detach first: the close we are about to cause must not schedule a
+      // competing retry alongside the one we are starting here.
+      old.onopen = null;
+      old.onmessage = null;
+      old.onerror = null;
+      old.onclose = null;
+      try {
+        old.close();
+      } catch {
+        /* already closing */
+      }
+    }
+
+    this.ws = null;
+    this.connected = false;
+    this._open();
+  }
+
+  /** Retry now if we are genuinely disconnected, cancelling any backoff. */
+  reconnectNow() {
+    if (this._closedByUs || this.connected) return;
+    clearTimeout(this._timer);
+    this._retry = 0;
+    this._open();
+  }
+
   _scheduleRetry() {
     this._retry = Math.min(this._retry + 1, 6);
     const delay = Math.min(500 * 2 ** (this._retry - 1), 8000);

@@ -18,6 +18,7 @@ import { HeartView, autoQuality } from './heart.js';
 import { Recorder } from './recorder.js';
 import { api } from './net.js';
 import { Link, LinkMode } from './link.js';
+import { ModeManager, AppMode } from './mode.js';
 import { UpdateManager, UpdateKind } from './updates.js';
 import { WebSerialSensor, webSerialUnavailableReason } from './webserial.js';
 
@@ -48,6 +49,20 @@ const dom = {
   linkIcon: $('link-icon'),
   linkLabel: $('link-label'),
   linkRtt: $('link-rtt'),
+
+  netPill: $('net-pill'),
+  netDot: $('net-dot'),
+  netLabel: $('net-label'),
+
+  modeSwitch: $('mode-switch'),
+  modeOnline: $('mode-online'),
+  modeOffline: $('mode-offline'),
+  modeLock: $('mode-lock'),
+
+  btnInstallPanel: $('btn-install-panel'),
+  installBlurb: $('install-blurb'),
+  installState: $('install-state'),
+  secureLink: $('secure-link'),
 
   offlineBanner: $('offline-banner'),
   offlineText: $('offline-text'),
@@ -130,6 +145,10 @@ let recorder;
 let link;
 /** @type {UpdateManager} */
 let updates;
+/** @type {ModeManager} */
+let modes;
+/** Deferred beforeinstallprompt event, if the browser offered one. */
+let installPrompt = null;
 /** @type {WebSerialSensor|null} */
 let sensor = null;
 
@@ -272,13 +291,41 @@ function setBpm(bpm) {
 function renderLink(st) {
   const local = st.mode !== LinkMode.SERVER;
 
+  // -- connectivity indicator -------------------------------------------
+  // Two signals, deliberately. `navigator.onLine` flips the instant the OS
+  // notices, which is what makes this feel immediate; the socket state is what
+  // makes it true (onLine returns true on a captive portal that drops every
+  // packet). Offline if either says so.
+  const reachable = st.serverUp && st.browserOnline;
+  dom.netDot.className = `h-2 w-2 rounded-full ${
+    reachable ? 'bg-trace-ecg' : 'bg-trace-alert'
+  }`;
+  dom.netLabel.textContent = reachable ? 'Internet' : 'No internet';
+  dom.netLabel.className = reachable ? 'text-slate-300' : 'text-trace-alert';
+  dom.netPill.title = reachable
+    ? 'Connected to the server. Sensor data can be sent for processing.'
+    : st.browserOnline
+      ? 'This device is online but the server is unreachable. Running locally.'
+      : 'This device has no network connection. Running locally.';
+
+  setNetworkDependentEnabled(reachable);
+  renderModeSwitch(st, reachable);
+
+  // -- link quality ------------------------------------------------------
   if (local) {
     dom.linkIcon.textContent = st.mode === LinkMode.HYBRID ? '🔌' : '💾';
-    dom.linkLabel.textContent = st.mode === LinkMode.HYBRID ? 'Local + server' : 'Local';
-    dom.linkLabel.className = 'text-trace-amber';
+    dom.linkLabel.textContent =
+      st.mode === LinkMode.HYBRID
+        ? 'Local + server'
+        : st.degraded
+          ? 'Local (fallback)'
+          : 'Local';
+    dom.linkLabel.className = st.degraded ? 'text-trace-amber' : 'text-slate-300';
     dom.linkRtt.textContent = '0 ms';
-    dom.linkRtt.className = 'text-slate-500 tabular-nums hidden sm:inline';
-    dom.linkPill.title = 'Processing in this browser — no network round trip.';
+    dom.linkRtt.className = 'text-trace-ecg tabular-nums hidden sm:inline';
+    dom.linkPill.title = st.degraded
+      ? 'Server unreachable — processing in this browser until it returns.'
+      : 'Processing in this browser — no network round trip.';
     return;
   }
 
@@ -309,6 +356,68 @@ function renderLink(st) {
       ? 'Measuring round-trip time…'
       : `Round trip ${Math.round(st.rtt)} ms` +
         (st.beatAge != null ? ` · newest beat ${Math.round(st.beatAge)} ms old` : '');
+}
+
+/**
+ * Controls that cannot work without a connection go dead immediately.
+ *
+ * Leaving them live would be a trap: the click appears to work, the request
+ * hangs, and the user is left wondering whether the reading changed. The
+ * simulation sliders are deliberately NOT in this set -- they drive the local
+ * engine too, so they keep working offline.
+ */
+function setNetworkDependentEnabled(enabled) {
+  const netOnly = [dom.btnSerial, dom.btnRefreshPorts, dom.portSelect];
+  for (const el of netOnly) {
+    if (!el) continue;
+    el.disabled = !enabled;
+    el.classList.toggle('needs-net-off', !enabled);
+    if (!enabled) {
+      el.title = 'Unavailable offline — this reads a sensor attached to the server.';
+    } else {
+      el.removeAttribute('title');
+    }
+  }
+
+  if (dom.serialHint && !enabled) {
+    dom.serialHint.textContent = 'Server-side sensors need a connection.';
+  }
+}
+
+/**
+ * The mode switch.
+ *
+ * In a browser tab it is locked to Online and says why. Once installed, the
+ * choice is real: the machine has its own copy and can do the work.
+ */
+function renderModeSwitch(st, reachable) {
+  // A socket event can land before boot() finishes wiring. Rendering the rest
+  // of the pill is still useful, so skip only this part.
+  if (!modes) return;
+  const m = modes.state();
+  const online = m.mode === AppMode.ONLINE;
+
+  dom.modeOnline.classList.toggle('is-active', online);
+  dom.modeOffline.classList.toggle('is-active', !online);
+  dom.modeOnline.setAttribute('aria-pressed', String(online));
+  dom.modeOffline.setAttribute('aria-pressed', String(!online));
+
+  dom.modeOnline.disabled = !m.canToggle;
+  dom.modeOffline.disabled = !m.canToggle;
+
+  dom.modeLock.style.display = m.canToggle ? 'none' : '';
+  dom.modeLock.title = m.lockedReason || '';
+  dom.modeSwitch.title = m.canToggle
+    ? 'Online sends data to the server. Offline processes everything on this computer.'
+    : m.lockedReason;
+
+  // Online-but-unreachable is not a failure, it is "waiting". Say that on the
+  // button rather than silently showing Online while running locally.
+  if (m.canToggle && online && !reachable) {
+    dom.modeOnline.textContent = 'Online·waiting';
+  } else {
+    dom.modeOnline.textContent = 'Online';
+  }
 }
 
 function showOfflineBanner(reason) {
@@ -475,28 +584,114 @@ function wireUpdates() {
 // ---------------------------------------------------------------------------
 
 function wireInstall() {
-  let deferred = null;
+  const setInstallUi = (available, note) => {
+    dom.btnInstall.classList.toggle('hidden', !available);
+    dom.btnInstallPanel.disabled = !available;
+    dom.btnInstallPanel.classList.toggle('needs-net-off', !available);
+    if (note) dom.installState.textContent = note;
+  };
+
+  // Already installed: there is nothing to offer, so say what they have.
+  if (modes.installed) {
+    setInstallUi(false, 'Installed. Offline mode is available.');
+    dom.installBlurb.textContent =
+      'Running as an installed app. Use the Offline/Online switch to choose whether data is processed here or on the server.';
+    dom.btnInstallPanel.classList.add('hidden');
+  } else {
+    setInstallUi(false, 'Checking…');
+  }
 
   window.addEventListener('beforeinstallprompt', (e) => {
-    // Chrome fires this instead of showing its own UI once preventDefault is
-    // called, which lets the button live in the header with everything else.
+    // Chrome suppresses its own UI once preventDefault is called, which lets
+    // the prompt live where the rest of the controls are.
     e.preventDefault();
-    deferred = e;
-    dom.btnInstall.classList.remove('hidden');
+    installPrompt = e;
+    setInstallUi(true, '');
   });
 
-  dom.btnInstall.addEventListener('click', async () => {
-    if (!deferred) return;
-    deferred.prompt();
-    const { outcome } = await deferred.userChoice;
-    if (outcome === 'accepted') dom.btnInstall.classList.add('hidden');
-    deferred = null;
-  });
+  const doInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    installPrompt = null;
+    if (outcome === 'accepted') setInstallUi(false, 'Installing…');
+    else setInstallUi(false, 'Install dismissed. The button returns if you reload.');
+  };
+
+  dom.btnInstall.addEventListener('click', doInstall);
+  dom.btnInstallPanel.addEventListener('click', doInstall);
 
   window.addEventListener('appinstalled', () => {
-    dom.btnInstall.classList.add('hidden');
-    toast('Installed. It will keep working offline after this first load.', 'success');
+    installPrompt = null;
+    setInstallUi(false, 'Installed. Offline mode is now available.');
+    toast('Installed. It keeps working offline, and you can now switch to Offline mode.', 'success');
   });
+
+  // On an insecure origin the browser will never offer installation and Web
+  // Serial is blocked outright. Rather than leave two dead buttons, find out
+  // where the secure copy lives and point at it.
+  checkSecureOrigin();
+}
+
+/**
+ * Is this origin secure, and if not, where is the one that is?
+ *
+ * Both headline features -- installing, and reading a USB sensor -- are
+ * silently unavailable over plain http on an IP address. Silently is the
+ * problem: the user clicks and nothing sensible happens.
+ */
+async function checkSecureOrigin() {
+  if (window.isSecureContext) return;
+
+  dom.installBlurb.textContent =
+    'Installing and USB sensors need a secure (https) connection. This page is running over plain http.';
+
+  try {
+    const res = await fetch('/api/access', { cache: 'no-store' });
+    if (!res.ok) return;
+    const info = await res.json();
+    if (!info.secure_url) return;
+
+    const url = info.secure_url + location.pathname;
+    dom.secureLink.href = url;
+    dom.secureLink.classList.remove('hidden');
+    dom.secureLink.textContent = 'Open the secure link → enables USB sensors & install';
+    dom.btnUsb.title = `USB sensors need https. Open ${info.secure_url}`;
+    dom.installState.textContent = 'Install is unavailable on this insecure address.';
+  } catch {
+    /* no access endpoint; nothing useful to point at */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mode switching
+// ---------------------------------------------------------------------------
+
+function wireModes() {
+  modes = new ModeManager();
+  modes.addEventListener('change', () => link && renderLink(link.state()));
+}
+
+function bindModeButtons() {
+  const apply = (mode) => {
+    if (!modes.set(mode)) {
+      if (!modes.state().canToggle) {
+        toast(modes.state().lockedReason, 'info');
+      }
+      return;
+    }
+    link.applyUserMode(mode);
+    if (mode === AppMode.OFFLINE) {
+      hideOfflineBanner();
+      toast('Offline mode — everything is processed on this computer.', 'success');
+    } else {
+      toast('Online mode — data is processed on the server.', 'success');
+    }
+    renderLink(link.state());
+  };
+
+  dom.modeOnline.addEventListener('click', () => apply(AppMode.ONLINE));
+  dom.modeOffline.addEventListener('click', () => apply(AppMode.OFFLINE));
 }
 
 // ---------------------------------------------------------------------------
@@ -963,7 +1158,12 @@ async function boot() {
   // Link owns the choice of where data comes from -- the server, or the local
   // JS pipeline -- and re-emits both under one event surface, so everything
   // below is written once and works either way.
+  // Created before the link: renderLink() consults it, and a socket event can
+  // arrive the moment the link is constructed.
+  wireModes();
+
   link = new Link();
+  link.userMode = modes.mode;
   link.addEventListener('hello', (e) => onHello(e.detail));
   link.addEventListener('batch', (e) => onBatch(e.detail));
   link.addEventListener('status', (e) => renderStatus(e.detail.status));
@@ -999,8 +1199,15 @@ async function boot() {
 
   dom.offlineDismiss.addEventListener('click', hideOfflineBanner);
 
+  bindModeButtons();
   wireUpdates();
   wireInstall();
+
+  // Honour a saved Offline preference straight away, so an installed app that
+  // was left in Offline does not briefly stream from the server on launch.
+  if (modes.mode === AppMode.OFFLINE) {
+    link.applyUserMode(AppMode.OFFLINE);
+  }
 
   try {
     const cfg = await api.config();
@@ -1035,6 +1242,8 @@ async function boot() {
     get engine() { return link.engine; },
     get sensor() { return sensor; },
     get updates() { return updates; },
+    get modes() { return modes; },
+    get modeState() { return modes.state(); },
   };
 
   hideBoot();

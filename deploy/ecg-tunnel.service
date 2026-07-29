@@ -1,0 +1,35 @@
+# Public HTTPS for the ECG visualizer, without needing any inbound port.
+#
+# The cloud firewall in front of this droplet allows 8000 and 22 but not 80 or
+# 443, so Let's Encrypt cannot validate: ACME connects to those exact port
+# numbers and neither is configurable. A Cloudflare tunnel sidesteps the whole
+# problem by dialling OUT from here, and terminates TLS on Cloudflare's edge
+# with a certificate browsers already trust.
+#
+# That matters because Web Serial (reading the AD8232 from the user's own USB
+# port) and service workers (offline mode, installable app) both refuse to run
+# outside a secure context.
+#
+# NOTE: a free quick tunnel gets a RANDOM hostname that changes on every
+# restart. url-watch.sh captures the current one so the app can display it.
+# For a stable address, run a named tunnel against a Cloudflare account.
+
+[Unit]
+Description=Cloudflare tunnel exposing the ECG visualizer over HTTPS
+After=network-online.target ecg-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cloudflared tunnel \
+  --no-autoupdate \
+  --url http://127.0.0.1:8000 \
+  --metrics 127.0.0.1:20241
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ecg-tunnel
+
+[Install]
+WantedBy=multi-user.target

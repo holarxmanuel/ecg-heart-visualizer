@@ -100,6 +100,17 @@
           <span id="status-detail" class="hidden text-slate-500 sm:inline"></span>
         </div>
 
+        <!-- Connectivity. Updates the instant the network changes, without a
+             refresh: the browser's online/offline events fire immediately,
+             and the socket state keeps the reading honest. -->
+        <div
+          id="net-pill"
+          class="flex items-center gap-2 rounded-full border border-white/10 bg-ink-700 px-3 py-1 font-mono text-[11px]"
+        >
+          <span id="net-dot" class="h-2 w-2 rounded-full bg-slate-500"></span>
+          <span id="net-label" class="text-slate-300">Checking…</span>
+        </div>
+
         <!-- Link quality. The point is transparency: the user is watching an
              animation driven from another machine, so they get to see how far
              behind it is rather than having to assume. -->
@@ -111,6 +122,22 @@
           <span id="link-icon" aria-hidden="true">☁</span>
           <span id="link-label" class="text-slate-300">Connecting…</span>
           <span id="link-rtt" class="hidden text-slate-500 tabular-nums sm:inline"></span>
+        </div>
+
+        <!-- Processing mode. Locked to Online in a browser tab; unlocked once
+             the app is installed, because only then does the machine have a
+             guaranteed local copy to fall back on. -->
+        <div
+          id="mode-switch"
+          class="flex items-center gap-1 rounded-full border border-white/10 bg-ink-700 p-0.5 font-mono text-[11px]"
+        >
+          <button id="mode-online" type="button" class="mode-btn is-active" aria-pressed="true">
+            Online
+          </button>
+          <button id="mode-offline" type="button" class="mode-btn" aria-pressed="false">
+            Offline
+          </button>
+          <span id="mode-lock" class="pr-1.5 text-slate-600" title="">🔒</span>
         </div>
 
         <div
@@ -257,6 +284,31 @@
 
           <!-- audio -->
           <div class="panel py-3">
+            <span class="panel-label mb-2 block">Get the App</span>
+            <p id="install-blurb" class="text-[12px] leading-snug text-slate-400">
+              Install to run the ECG entirely on this computer — no connection
+              needed, and the USB sensor is read directly.
+            </p>
+            <button id="btn-install-panel" class="btn btn-primary mt-2 w-full">
+              Install app
+            </button>
+            <a
+              id="secure-link"
+              class="mt-2 hidden w-full rounded border border-trace-amber/40 bg-trace-amber/10 px-2 py-1.5 text-center text-[11px] leading-snug text-trace-amber"
+              href="#"
+              >Open the secure link to enable USB sensors &amp; install</a
+            >
+            <a
+              class="mt-2 block text-center text-[11px] text-slate-500 underline decoration-dotted hover:text-slate-300"
+              href="https://github.com/holarxmanuel/ecg-heart-visualizer"
+              target="_blank"
+              rel="noopener"
+              >or clone it from GitHub</a
+            >
+            <p id="install-state" class="mt-2 text-[11px] text-slate-500"></p>
+          </div>
+
+          <div class="panel">
             <span class="panel-label mb-2 block">Heart Sounds</span>
             <label class="ctl">
               <span>Volume <b id="vol-val">70</b>%</span>

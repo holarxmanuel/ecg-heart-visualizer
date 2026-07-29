@@ -197,3 +197,44 @@ canvas {
     animation: none !important;
   }
 }
+
+
+/* --------------------------------------------------------------------------
+   Online / offline mode switch
+   -------------------------------------------------------------------------- */
+
+.mode-btn {
+  border-radius: 9999px;
+  padding: 0.15rem 0.6rem;
+  color: rgb(148 163 184);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.mode-btn:hover:not(:disabled) {
+  color: rgb(226 232 240);
+}
+
+.mode-btn.is-active {
+  background: rgb(51 65 85);
+  color: rgb(226 232 240);
+}
+
+/* Disabled must read as "not available to you", not as "broken". Keeping the
+   active one legible while dimming the rest says which is in force and that
+   the choice is not yours -- greying both would just look faulty. */
+.mode-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.mode-btn.is-active:disabled {
+  opacity: 0.75;
+}
+
+/* Controls that genuinely cannot work without a connection. Applied live, so
+   the user sees them go dead the moment the network does. */
+.needs-net-off {
+  opacity: 0.4;
+  pointer-events: none;
+  filter: grayscale(0.8);
+}

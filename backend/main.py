@@ -563,6 +563,42 @@ async def reset_session() -> dict[str, Any]:
     return {"ok": True, "status": pipeline.status()}
 
 
+#: Written by /usr/local/bin/ecg-tunnel-url. A free Cloudflare quick tunnel
+#: gets a random hostname that changes on restart, so it cannot be a constant.
+TUNNEL_URL_FILE = Path("/var/lib/ecg-tunnel/url")
+
+
+@app.get("/api/access")
+async def get_access(request: Request) -> dict[str, Any]:
+    """
+    Where can this app be reached, and what can the current origin actually do?
+
+    The dashboard needs this because two headline features -- reading an
+    AD8232 over Web Serial, and installing the app for offline use -- are
+    silently unavailable on an insecure origin. Telling the user "this needs
+    https, here is the https link" is far better than a button that fails.
+    """
+    secure_url = None
+    if TUNNEL_URL_FILE.is_file():
+        try:
+            secure_url = TUNNEL_URL_FILE.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            secure_url = None
+
+    host = request.headers.get("host", "")
+    # Cloudflare terminates TLS at its edge and forwards the original scheme.
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    is_secure = proto == "https" or host.split(":")[0] in ("localhost", "127.0.0.1", "::1")
+
+    return {
+        "secure_url": secure_url,
+        "insecure_url": f"http://{config.PUBLIC_IP}:{config.PORT}",
+        "origin_is_secure": is_secure,
+        "host": host,
+        "proto": proto,
+    }
+
+
 @app.get("/api/version")
 async def get_version() -> dict[str, Any]:
     """
