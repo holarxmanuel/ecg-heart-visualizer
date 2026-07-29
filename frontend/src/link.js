@@ -57,6 +57,14 @@ export class Link extends EventTarget {
     this.userMode = AppMode.ONLINE;
     /** True when we are on local only because the server went away. */
     this.degraded = false;
+    /**
+     * True when this client has deliberately stepped out of the shared server
+     * session -- because it is reading its own USB sensor -- while still
+     * online. Distinct from `degraded` (the server vanished) and from the
+     * offline user mode (a persistent preference): this is a per-session
+     * detachment that ends when the user rejoins.
+     */
+    this.privateSession = false;
     /** Set once the server has ever answered, so we can tell "not yet" from "lost". */
     this.everConnected = false;
 
@@ -113,7 +121,7 @@ export class Link extends EventTarget {
       // the authoritative source and the one other viewers are watching. But
       // only if the user actually wants online -- someone who deliberately
       // chose offline must not be yanked back by a network event.
-      if (this.degraded && this.userMode === AppMode.ONLINE) {
+      if (this.degraded && !this.privateSession && this.userMode === AppMode.ONLINE) {
         this.degraded = false;
         this.useServer({ automatic: true });
         this.dispatchEvent(new CustomEvent('restored'));
@@ -334,6 +342,7 @@ export class Link extends EventTarget {
 
   /** Drive from the server. */
   useServer({ automatic = false } = {}) {
+    this.privateSession = false;
     this._fellBackAutomatically = automatic;
     this.engine.stop();
     this.mode = LinkMode.SERVER;
@@ -343,12 +352,34 @@ export class Link extends EventTarget {
   /** Drive from the local JS pipeline (offline simulation, or a local sensor). */
   useLocal(sourceMode = 'simulate', opts = {}) {
     this._fellBackAutomatically = false;
+    this.degraded = false;
+    this.privateSession = !!opts.private;
     // Before start(), so the engine's `hello` is relayed rather than dropped.
     this.mode = opts.hybrid ? LinkMode.HYBRID : LinkMode.LOCAL;
     this.engine.start();
-    const src = this.engine.select(sourceMode, opts);
+    const src = sourceMode ? this.engine.select(sourceMode, opts) : null;
     this._emitLink();
     return src;
+  }
+
+  /**
+   * Step out of the shared session and drive from this machine only.
+   *
+   * `sourceMode` may be null, which leaves the engine with no source at all --
+   * the correct state when the user asked for their own sensor and there is
+   * none. Falling back to the shared simulation there would be actively
+   * misleading: it would show a moving trace that is not their heart.
+   */
+  usePrivate(sourceMode, opts = {}) {
+    return this.useLocal(sourceMode, { ...opts, private: true });
+  }
+
+  /** Rejoin the shared server session. */
+  rejoin() {
+    this.privateSession = false;
+    this.degraded = false;
+    if (!this.conn.connected) this.conn.connect();
+    this.useServer();
   }
 
   /**
@@ -373,6 +404,7 @@ export class Link extends EventTarget {
       mode: this.mode,
       userMode: this.userMode,
       degraded: this.degraded,
+      privateSession: this.privateSession,
       serverUp: this.serverUp,
       everConnected: this.everConnected,
       browserOnline: navigator.onLine,

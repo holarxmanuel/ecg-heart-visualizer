@@ -43,6 +43,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function main() {
   const browser = await puppeteer.launch({
     headless: 'new',
+    // Several pages plus a 1 kHz backend on a GPU-less box: CDP calls can
+    // take far longer than the 30 s default.
+    protocolTimeout: 180000,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -333,13 +336,13 @@ async function main() {
   const netOff = await page.evaluate(() => ({
     dot: document.getElementById('net-dot').className,
     serialDisabled: document.getElementById('btn-serial').disabled,
-    portsDisabled: document.getElementById('btn-refresh-ports').disabled,
-    greyed: document.getElementById('btn-serial').classList.contains('needs-net-off'),
     simSliderDisabled: document.getElementById('sim-bpm').disabled,
   }));
   check('indicator dot turns red', netOff.dot.includes('trace-alert'), netOff.dot);
-  check('server-side sensor controls disabled', netOff.serialDisabled && netOff.portsDisabled);
-  check('disabled controls visibly greyed', netOff.greyed);
+  // Nothing is greyed out any more, deliberately: the Arduino button now reads
+  // a sensor on THIS machine, so it is one of the things that must still work
+  // when the network does not.
+  check('own-sensor button stays usable offline', netOff.serialDisabled === false);
   check('simulation sliders stay usable offline', netOff.simSliderDisabled === false);
 
   const degraded = await page.evaluate(() => window.__ecg.linkState);
@@ -589,11 +592,35 @@ async function main() {
   check('BPM slider spans the simulator range', range.min <= 30 && range.max >= 200,
         `${range.min}-${range.max}`);
 
+  // Restore the shared preference: it is per-origin localStorage, so leaving
+  // it on 'offline' would silently change how later sections start up.
+  await offlinePage.evaluate(() => document.getElementById('mode-online').click());
+  await sleep(1000);
   await offlinePage.close();
 
+  // NOTE: the multi-client checks (shared-session slider sync, and one user's
+  // own sensor detaching from the shared session) live in their own suites --
+  // sync.mjs and detach.mjs. They need two live clients each, and running them
+  // inside this session means three pages building anatomy and rendering in
+  // software at once, which a GPU-less box cannot sustain. Run:
+  //
+  //     node sync.mjs && node detach.mjs
+  //
   // ---- PWA metadata ----------------------------------------------------
   console.log('\nPWA installability');
   console.log('-'.repeat(74));
+
+  // Fresh renderer for the remaining sections. By this point the main page has
+  // been reloaded offline, had a service worker take control, lost and
+  // regained its socket, and run a 1 kHz engine throughout -- and it
+  // eventually stops answering CDP calls. Rather than chase that, hand the
+  // last read-only checks a clean page.
+  await page.goto('about:blank');
+  await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForFunction('window.__ecg !== undefined', { timeout: 150000, polling: 500 });
+  await page.evaluate(() => {
+    window.__ecg.heart.enabled = false;
+  });
 
   const manifest = await page.evaluate(async () => {
     const res = await fetch('/manifest.webmanifest');

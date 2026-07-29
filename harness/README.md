@@ -2,9 +2,16 @@
 
 ```bash
 npm install          # downloads its own Chrome
-node test.mjs        # against http://localhost:8000
+node test.mjs        # the main suite
+node sync.mjs        # two clients, shared-session slider sync
+node detach.mjs      # two clients, own-sensor detachment
 ECG_URL=https://143-198-27-18.nip.io node test.mjs
 ```
+
+The multi-client suites are separate on purpose. Each needs two live clients,
+and folding them into `test.mjs` means three pages building anatomy and
+rendering in software at once -- which a GPU-less box cannot sustain, so the
+boot times out rather than anything failing on merit.
 
 Drives the app through `window.__ecg` and asserts on real internal state
 rather than scraping formatted DOM text.
@@ -25,4 +32,15 @@ These cost real time to rediscover, so they are written down:
   `heart.enabled = false` for functional tests; enable only for screenshots.
 - `AudioContext.resume()` never settles with no audio device — race everything
   audio-related against a timeout.
-- A crashed run leaves Chrome alive holding a WebSocket: `pkill chrome`.
+- A crashed run leaves Chrome alive holding a WebSocket: `pkill -9 -f chrome`.
+  Leftover renderers starve the next run and produce timeouts that look like
+  product bugs.
+- A page that has been reloaded offline, had a service worker take control,
+  lost and regained its socket, and run a 1 kHz engine throughout will
+  eventually stop answering CDP calls. Hand later sections a fresh page rather
+  than chasing it.
+- The mode preference lives in `localStorage`, which is per-ORIGIN and so is
+  shared by every tab and every suite. Clear it when a test needs a known
+  starting mode, and restore it afterwards.
+- Raise `protocolTimeout` well above the 30 s default; software rendering
+  makes ordinary evaluates slow.

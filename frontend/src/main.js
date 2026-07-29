@@ -90,7 +90,7 @@ const dom = {
   btnSim: $('btn-sim'),
   btnSerial: $('btn-serial'),
   serialPanel: $('serial-panel'),
-  portSelect: $('port-select'),
+  sensorState: $('sensor-state'),
   btnRefreshPorts: $('btn-refresh-ports'),
   serialHint: $('serial-hint'),
 
@@ -239,6 +239,69 @@ function renderStatus(s) {
     state.sessionStart = null;
     heart?.clearBeats();
   }
+
+  syncSimControls(s);
+}
+
+/**
+ * Timestamp of this user's last touch on each simulation control.
+ *
+ * The shared session broadcasts status four times a second, so without this a
+ * remote value would fight the user's own drag -- the handle would jump back
+ * under their finger between frames -- and their own change would echo back
+ * and re-set the control they were still moving.
+ */
+const simEdit = { bpm: 0, noise: 0, artifacts: 0 };
+
+/**
+ * How long a local edit wins over the broadcast.
+ *
+ * Long enough to cover a drag plus the round trip that echoes the change back
+ * (measured at ~20-150 ms here), short enough that letting go of the slider
+ * hands control back to the shared session almost immediately.
+ */
+const SIM_ECHO_MS = 1600;
+
+/**
+ * Reflect another user's changes in this dashboard's controls.
+ *
+ * The server session is shared: anyone with the link can move the simulation,
+ * and everyone sees the result. The trace and the BPM readout already followed
+ * -- they are derived from the stream -- but the CONTROLS did not, so a
+ * dashboard could show 60 on its slider while plainly rendering 100 BPM.
+ *
+ * Only applies to the shared session. A private or offline session belongs to
+ * this user alone and nothing remote should touch it.
+ */
+function syncSimControls(s) {
+  if (drivingLocally()) return;
+
+  const x = s.extra;
+  if (!x) return;
+
+  const now = performance.now();
+
+  if (typeof x.bpm === 'number' && now - simEdit.bpm > SIM_ECHO_MS) {
+    const bpm = Math.round(x.bpm);
+    if (Number(dom.simBpm.value) !== bpm) {
+      dom.simBpm.value = bpm;
+      dom.simBpmVal.textContent = bpm;
+    }
+  }
+
+  if (typeof x.noise === 'number' && now - simEdit.noise > SIM_ECHO_MS) {
+    const pct = Math.round(x.noise * 100);
+    if (Number(dom.simNoise.value) !== pct) {
+      dom.simNoise.value = pct;
+      dom.simNoiseVal.textContent = pct;
+    }
+  }
+
+  if (typeof x.artifacts === 'boolean' && now - simEdit.artifacts > SIM_ECHO_MS) {
+    if (dom.simArtifacts.checked !== x.artifacts) {
+      dom.simArtifacts.checked = x.artifacts;
+    }
+  }
 }
 
 function fmtElapsed(seconds) {
@@ -332,24 +395,24 @@ function renderLink(st) {
       ? 'This device is online but the server is unreachable. Running locally.'
       : 'This device has no network connection. Running locally.';
 
-  setNetworkDependentEnabled(reachable);
   renderModeSwitch(st, reachable);
 
   // -- link quality ------------------------------------------------------
   if (local) {
-    dom.linkIcon.textContent = st.mode === LinkMode.HYBRID ? '🔌' : '💾';
-    dom.linkLabel.textContent =
-      st.mode === LinkMode.HYBRID
-        ? 'Local + server'
-        : st.degraded
-          ? 'Local (fallback)'
-          : 'Local';
+    dom.linkIcon.textContent = st.privateSession ? '🔌' : '💾';
+    dom.linkLabel.textContent = st.privateSession
+      ? 'Private'
+      : st.degraded
+        ? 'Local (fallback)'
+        : 'Local';
     dom.linkLabel.className = st.degraded ? 'text-trace-amber' : 'text-slate-300';
     dom.linkRtt.textContent = '0 ms';
     dom.linkRtt.className = 'text-trace-ecg tabular-nums hidden sm:inline';
-    dom.linkPill.title = st.degraded
-      ? 'Server unreachable — processing in this browser until it returns.'
-      : 'Processing in this browser — no network round trip.';
+    dom.linkPill.title = st.privateSession
+      ? 'Your own sensor, processed here. Detached from the shared session, so nobody else can change what you see.'
+      : st.degraded
+        ? 'Server unreachable — processing in this browser until it returns.'
+        : 'Processing in this browser — no network round trip.';
     return;
   }
 
@@ -382,31 +445,6 @@ function renderLink(st) {
         (st.beatAge != null ? ` · newest beat ${Math.round(st.beatAge)} ms old` : '');
 }
 
-/**
- * Controls that cannot work without a connection go dead immediately.
- *
- * Leaving them live would be a trap: the click appears to work, the request
- * hangs, and the user is left wondering whether the reading changed. The
- * simulation sliders are deliberately NOT in this set -- they drive the local
- * engine too, so they keep working offline.
- */
-function setNetworkDependentEnabled(enabled) {
-  const netOnly = [dom.btnSerial, dom.btnRefreshPorts, dom.portSelect];
-  for (const el of netOnly) {
-    if (!el) continue;
-    el.disabled = !enabled;
-    el.classList.toggle('needs-net-off', !enabled);
-    if (!enabled) {
-      el.title = 'Unavailable offline — this reads a sensor attached to the server.';
-    } else {
-      el.removeAttribute('title');
-    }
-  }
-
-  if (dom.serialHint && !enabled) {
-    dom.serialHint.textContent = 'Server-side sensors need a connection.';
-  }
-}
 
 /**
  * The mode switch.
@@ -471,6 +509,137 @@ function hideOfflineBanner() {
  * the session exists there too -- but that forwarding is fire-and-forget and
  * can never stall acquisition.
  */
+/**
+ * Read the sensor attached to THIS computer, detached from the shared session.
+ *
+ * The online session is deliberately shared -- anyone with the link moves the
+ * simulation for everyone. That is right for a demonstration and wrong the
+ * moment a user has their own hardware: their trace is their heart, and a
+ * stranger changing the simulated rate must not touch it.
+ *
+ * So asking for your own sensor steps out of the shared session entirely. The
+ * detachment happens FIRST, before any of the fallible work, because the user
+ * asked to leave -- and that has to hold whether or not a sensor turns up.
+ *
+ * When no sensor is found the trace stops. It deliberately does NOT fall back
+ * to the shared simulation: showing a moving trace that is not the user's own
+ * heart, on a dashboard they just pointed at their chest, is the worst
+ * available outcome.
+ */
+async function useOwnSensor() {
+  armAudioInBackground();
+
+  // Detach immediately, with no source: reading stops until a sensor is found.
+  link.usePrivate('off');
+  chart.clear();
+  state.sessionStart = null;
+  dom.simControls.classList.add('hidden');
+  dom.serialPanel.classList.remove('hidden');
+  dom.btnSerial.classList.add('is-active');
+  dom.btnSim.classList.remove('is-active');
+  renderLink(link.state());
+
+  const reason = webSerialUnavailableReason();
+  if (reason) {
+    dom.serialHint.textContent = reason;
+    toast(reason, 'error');
+    return;
+  }
+
+  dom.sensorState.textContent = 'looking for a board…';
+  dom.sensorState.className = 'input flex-1 truncate !py-1 font-mono text-[11px] text-slate-400';
+  dom.serialHint.textContent = 'Looking for a connected ECG board…';
+
+  try {
+    if (!sensor?.connected) {
+      sensor = new WebSerialSensor();
+      // Reopen a port the user already granted without prompting again; only
+      // ask when there is nothing to reopen.
+      const reopened = await sensor.openGranted();
+      if (!reopened) {
+        dom.sensorState.textContent = 'choose a board…';
+        // requestPort() resolves when the user picks, rejects when they
+        // cancel -- and in an environment with no picker at all it may do
+        // neither. Same failure shape as AudioContext.resume(): a promise
+        // that never settles leaves the UI stuck on a progress label with no
+        // way back. Race it so there is always an outcome.
+        await Promise.race([
+          sensor.requestAndOpen(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('No board selected')), 120000)
+          ),
+        ]);
+      }
+    }
+
+    const info = sensor.info();
+    const push = link.usePrivate('push', { label: info.label });
+    attachSensorTo(push);
+
+    dom.btnUsb.classList.add('btn-primary');
+    dom.sensorState.textContent = info.label;
+    dom.sensorState.className = 'input flex-1 truncate !py-1 font-mono text-[11px] text-trace-ecg';
+    dom.serialHint.textContent = 'Reading your own sensor. This session is yours alone.';
+    toast(`Sensor connected (${info.label}) — detached from the shared session`, 'success');
+  } catch (err) {
+    const msg = String(err?.message || err);
+    const cancelled = /No port selected|cancelled/i.test(msg);
+    dom.serialHint.textContent = cancelled
+      ? 'No board selected. Reading is stopped — press Arduino again, or Simulate to rejoin.'
+      : msg;
+    if (!cancelled) toast(msg, 'error');
+    sensor = null;
+    dom.sensorState.textContent = 'No board connected';
+    dom.sensorState.className = 'input flex-1 truncate !py-1 font-mono text-[11px] text-trace-alert';
+    // Stay detached with no data. Rejoining silently would put the shared
+    // simulation back on screen as though it were a real reading.
+  }
+}
+
+/** Wire an open sensor to a local push source. */
+function attachSensorTo(push) {
+  sensor.addEventListener('samples', (e) => {
+    const { samples, leadsOff } = e.detail;
+    push.push(samples, leadsOff);
+  });
+
+  sensor.addEventListener('close', () => {
+    dom.btnUsb.classList.remove('btn-primary');
+    dom.sensorState.textContent = 'No board connected';
+    dom.sensorState.className = 'input flex-1 truncate !py-1 font-mono text-[11px] text-trace-alert';
+    dom.serialHint.textContent = 'Sensor disconnected. Reading stopped.';
+    toast('Sensor disconnected — reading stopped', 'warn');
+    // Still detached, still no data, for the same reason as above.
+    link.usePrivate('off');
+    renderLink(link.state());
+  });
+
+  sensor.addEventListener('error', (e) => toast(`Sensor error: ${e.detail.message}`, 'error'));
+}
+
+/** Rejoin the shared server session. */
+async function rejoinShared() {
+  armAudioInBackground();
+  await disconnectUsbSensor();
+  dom.serialPanel.classList.add('hidden');
+  dom.simControls.classList.remove('hidden');
+  dom.btnSerial.classList.remove('is-active');
+  link.rejoin();
+  chart.clear();
+  renderLink(link.state());
+
+  // If the shared session is idle, starting it is a global act -- which is
+  // correct here: that is what the shared dashboard is for.
+  try {
+    const st = await api.status();
+    if (st.mode === 'idle') await api.setSource('simulate');
+    renderStatus(st);
+  } catch {
+    /* server unreachable; the connection pill already says so */
+  }
+  toast('Rejoined the shared session', 'success');
+}
+
 async function connectUsbSensor() {
   const reason = webSerialUnavailableReason();
   if (reason) {
@@ -482,31 +651,17 @@ async function connectUsbSensor() {
     sensor = new WebSerialSensor();
     const info = await sensor.requestAndOpen();
 
-    // Tell the server to expect forwarded samples, so it stops simulating and
-    // its own status reflects what is really driving the trace.
-    try {
-      await api.setSource('client', info.label);
-    } catch {
-      // Server unavailable is not fatal here -- local processing is the
-      // primary path and works regardless.
-    }
+    // Deliberately does NOT touch the server's source. That call switched the
+    // SHARED session to this client's feed, so one user plugging in a board
+    // stopped everyone else's trace. A sensor is private by nature.
+    const push = link.usePrivate('push', { label: info.label });
+    attachSensorTo(push);
 
-    const push = link.useLocal('push', { hybrid: true, label: info.label });
-
-    sensor.addEventListener('samples', (e) => {
-      const { samples, leadsOff } = e.detail;
-      push.push(samples, leadsOff);
-      link.forwardSamples(samples, leadsOff);
-    });
-
-    sensor.addEventListener('close', () => {
-      toast('USB sensor disconnected', 'warn');
-      dom.btnUsb.classList.remove('btn-primary');
-      link.useServer();
-      api.setSource('simulate').catch(() => {});
-    });
-
-    sensor.addEventListener('error', (e) => toast(`Sensor error: ${e.detail.message}`, 'error'));
+    dom.serialPanel.classList.remove('hidden');
+    dom.simControls.classList.add('hidden');
+    dom.btnSerial.classList.add('is-active');
+    dom.btnSim.classList.remove('is-active');
+    dom.serialHint.textContent = `Reading from ${info.label}. This session is yours alone.`;
 
     dom.btnUsb.classList.add('btn-primary');
     state.running = true;
@@ -923,93 +1078,21 @@ async function armAudio() {
   return true;
 }
 
-async function selectSource(mode) {
-  dom.btnStart.disabled = true;
-  try {
-    if (mode === 'serial') {
-      const port = dom.portSelect.value || null;
-      const res = await ctlSetSource('serial', port);
-      renderStatus(res.status);
-      state.mode = 'serial';
-      state.sessionStart = Date.now();
-      chart.clear();
-      toast(`Connected to ${res.status.port}`, 'success');
-    } else if (mode === 'simulate') {
-      const res = await ctlSetSource('simulate');
-      renderStatus(res.status);
-      state.mode = 'simulate';
-      state.sessionStart = Date.now();
-      chart.clear();
-      toast('Simulation running', 'success');
-    } else {
-      const res = await ctlSetSource('off');
-      renderStatus(res.status);
-      state.mode = 'off';
-      chart.clear();
-    }
-  } catch (err) {
-    toast(err.message, 'error');
-    dom.serialHint.textContent = err.message;
-    // Leave the UI in a usable state rather than a half-connected one.
-    try {
-      renderStatus(drivingLocally() ? link.engine.status() : await api.status());
-    } catch {
-      /* server is down; the connection pill already says so */
-    }
-  } finally {
-    dom.btnStart.disabled = false;
-  }
-}
 
-async function refreshPorts() {
-  if (drivingLocally()) {
-    // These are ports on the SERVER. Offline there is nothing to enumerate,
-    // and asking would just produce a fetch error.
-    dom.portSelect.innerHTML = '<option value="">offline — server ports unavailable</option>';
-    dom.serialHint.textContent = 'Use USB Sensor to read a board attached to this computer.';
-    return;
-  }
-  dom.portSelect.innerHTML = '<option>scanning…</option>';
-  try {
-    const info = await api.ports();
-    dom.portSelect.innerHTML = '';
-
-    if (!info.pyserial_available) {
-      dom.portSelect.innerHTML = '<option value="">pyserial not installed</option>';
-      dom.serialHint.textContent =
-        'Run: pip install pyserial   (in backend/.venv), then restart the server.';
-      return;
-    }
-    if (!info.ports.length) {
-      dom.portSelect.innerHTML = '<option value="">no ports found</option>';
-      dom.serialHint.textContent =
-        'No COM ports detected. Plug in the Uno, install the CH340/CP210x driver ' +
-        'if it is a clone, and close the Arduino IDE Serial Monitor.';
-      return;
-    }
-
-    for (const p of info.ports) {
-      const opt = document.createElement('option');
-      opt.value = p.device;
-      opt.textContent = `${p.device} — ${p.description}${p.likely_arduino ? '  ✓' : ''}`;
-      dom.portSelect.appendChild(opt);
-    }
-    if (info.suggested) dom.portSelect.value = info.suggested;
-    dom.serialHint.textContent =
-      `${info.ports.length} port(s) · ${info.baud} baud · ` +
-      `expects one ADC value per line`;
-  } catch (err) {
-    dom.portSelect.innerHTML = '<option value="">error</option>';
-    dom.serialHint.textContent = err.message;
-  }
-}
 
 function bindControls() {
   // --- start / pause ----------------------------------------------------
   dom.btnStart.addEventListener('click', async () => {
     armAudioInBackground();
     if (state.mode === 'off') {
-      await selectSource('simulate');
+      // Nothing is running. Offline (or detached) that means start the local
+      // simulator; on the shared session it means start it for everyone.
+      if (drivingLocally()) {
+        link.engine.select('simulate');
+        chart.clear();
+      } else {
+        await rejoinShared();
+      }
       return;
     }
     try {
@@ -1021,27 +1104,37 @@ function bindControls() {
   });
 
   // --- source -----------------------------------------------------------
-  dom.btnSim.addEventListener('click', async () => {
-    armAudioInBackground();
-    dom.serialPanel.classList.add('hidden');
-    dom.simControls.classList.remove('hidden');
-    await selectSource('simulate');
-  });
-
-  dom.btnSerial.addEventListener('click', async () => {
-    armAudioInBackground();
-    const opening = dom.serialPanel.classList.contains('hidden');
-    dom.serialPanel.classList.toggle('hidden', !opening);
-    if (opening) {
-      await refreshPorts();
-      dom.serialHint.textContent += '  →  press Arduino again to connect.';
-    } else {
-      dom.simControls.classList.add('hidden');
-      await selectSource('serial');
+  // Simulate = the SHARED session. Arduino = MY sensor, private.
+  //
+  // The pairing is the point: one button joins everyone, the other steps out.
+  // Previously both swapped the SERVER's source, so picking Arduino stopped
+  // every other viewer's trace -- which is indefensible once more than one
+  // person has the link.
+  dom.btnSim.addEventListener('click', () => {
+    if (modes.mode === AppMode.OFFLINE) {
+      // Offline there is no shared session to rejoin; this just means "use the
+      // simulator" on the local engine.
+      armAudioInBackground();
+      dom.serialPanel.classList.add('hidden');
+      dom.simControls.classList.remove('hidden');
+      dom.btnSerial.classList.remove('is-active');
+      link.usePrivate('simulate');
+      chart.clear();
+      renderLink(link.state());
+      return;
     }
+    rejoinShared();
   });
 
-  dom.btnRefreshPorts.addEventListener('click', refreshPorts);
+  dom.btnSerial.addEventListener('click', () => useOwnSensor());
+
+  // "Refresh ports" now means "pick a different board", since the ports that
+  // matter are on this machine and only the browser may enumerate them.
+  dom.btnRefreshPorts.addEventListener('click', async () => {
+    await disconnectUsbSensor();
+    await useOwnSensor();
+  });
+
 
   // --- audio ------------------------------------------------------------
   dom.btnUsb.addEventListener('click', async () => {
@@ -1082,30 +1175,47 @@ function bindControls() {
   });
 
   // --- simulation -------------------------------------------------------
-  const pushSim = debounce(async (patch) => {
-    try {
-      // Apply locally first: offline that is the only thing running, and
-      // online it costs nothing. A slider that does nothing when the network
-      // is down is indistinguishable from a broken control.
-      await ctlSetSimulation(patch);
-    } catch (err) {
-      toast(err.message, 'error');
-    }
-  }, 90);
+  // Coalescing, not debouncing.
+  //
+  // A plain debounce keeps only the LAST call, which is right for repeated
+  // updates to ONE control and wrong across controls: nudging noise and then
+  // toggling artifacts inside the window discarded the noise change entirely,
+  // and silently. Merging the patches keeps every field while still collapsing
+  // a drag into a single request.
+  let pendingSim = null;
+  let simTimer = null;
+  const pushSim = (patch) => {
+    pendingSim = { ...(pendingSim || {}), ...patch };
+    clearTimeout(simTimer);
+    simTimer = setTimeout(async () => {
+      const merged = pendingSim;
+      pendingSim = null;
+      try {
+        // ctlSetSimulation applies locally first: offline that is the only
+        // thing running, and online it costs nothing.
+        await ctlSetSimulation(merged);
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }, 90);
+  };
 
   dom.simBpm.addEventListener('input', (e) => {
     const bpm = Number(e.target.value);
+    simEdit.bpm = performance.now();
     dom.simBpmVal.textContent = bpm;
     pushSim({ bpm });
   });
 
   dom.simNoise.addEventListener('input', (e) => {
     const pct = Number(e.target.value);
+    simEdit.noise = performance.now();
     dom.simNoiseVal.textContent = pct;
     pushSim({ noise: pct / 100 });
   });
 
   dom.simArtifacts.addEventListener('change', (e) => {
+    simEdit.artifacts = performance.now();
     pushSim({ artifacts: e.target.checked });
   });
 
