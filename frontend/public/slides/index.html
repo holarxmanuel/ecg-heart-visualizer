@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project Review, downloads · ECG Heart Visualizer</title>
+    <meta name="description" content="Download the Real-Time ECG Heart Visualizer project review deck as PDF, PowerPoint or a self-contained web page." />
+    <style>
+      :root {
+        --ground:#06090b; --panel:#0e1518; --line:#1e2b30;
+        --ink:#ccdadd; --dim:#7b9096; --muted:#5b7076; --trace:#31e07a;
+        --mono: ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+        --sans: system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+      }
+      @media (prefers-color-scheme: light) {
+        :root { --ground:#f6f4f1; --panel:#fffefc; --line:#ded5cc;
+                --ink:#1b2326; --dim:#4f6066; --muted:#7b8a90; --trace:#0a7d40; }
+      }
+      * { box-sizing:border-box; }
+      body {
+        margin:0; background:var(--ground); color:var(--ink);
+        font-family:var(--sans); line-height:1.6;
+        padding:clamp(1.5rem,5vw,4rem);
+        background-image:
+          linear-gradient(rgba(232,56,79,.09) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(232,56,79,.09) 1px, transparent 1px);
+        background-size:40px 40px;
+      }
+      main { width:min(760px,100%); margin-inline:auto; }
+      .eyebrow { font-family:var(--mono); font-size:.72rem; letter-spacing:.22em;
+                 text-transform:uppercase; color:var(--trace); margin:0 0 .8rem; }
+      h1 { font-size:clamp(1.9rem,5vw,2.9rem); line-height:1.05;
+           letter-spacing:-.03em; margin:0 0 .7rem; text-wrap:balance; }
+      p.lead { color:var(--dim); max-width:56ch; margin:0 0 2rem; }
+      ul { list-style:none; padding:0; margin:0; display:grid; gap:.8rem; }
+      a.dl { display:flex; align-items:center; gap:1rem; text-decoration:none;
+             background:var(--panel); border:1px solid var(--line); border-radius:3px;
+             padding:1rem 1.15rem; color:inherit; transition:border-color 140ms ease; }
+      a.dl:hover { border-color:var(--trace); }
+      a.dl:focus-visible { outline:2px solid var(--trace); outline-offset:2px; }
+      .fmt { font-family:var(--mono); font-size:.7rem; letter-spacing:.12em;
+             text-transform:uppercase; color:var(--trace); border:1px solid var(--line);
+             border-radius:2px; padding:.35rem .55rem; flex:none; min-width:5.2rem; text-align:center; }
+      .t { font-weight:620; }
+      .d { color:var(--dim); font-size:.87rem; }
+      .sz { margin-left:auto; font-family:var(--mono); font-size:.74rem; color:var(--muted); flex:none; }
+      .note { font-family:var(--mono); font-size:.74rem; color:var(--muted); margin-top:1.5rem; line-height:1.7; }
+      footer { margin-top:2.2rem; padding-top:1.2rem; border-top:1px solid var(--line);
+               font-size:.82rem; color:var(--muted); }
+      footer a { color:var(--trace); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Real-Time ECG Heart Visualizer</p>
+      <h1>Project review deck</h1>
+      <p class="lead">
+        Sixteen slides covering the system, its signal processing, the
+        procedurally generated 3&#8209;D heart, a step&#8209;by&#8209;step walkthrough for
+        both simulation and real&#8209;sensor use, verification results, and the
+        remaining hardware work.
+      </p>
+
+      <ul>
+        <li><a class="dl" href="ECG-Heart-Visualizer-Project-Review.pdf" download>
+          <span class="fmt">PDF</span>
+          <span><span class="t">Best for sending</span><br />
+            <span class="d">Opens anywhere, prints cleanly, nothing to install.</span></span>
+          <span class="sz">2.4 MB</span></a></li>
+
+        <li><a class="dl" href="ECG-Heart-Visualizer-Project-Review.pptx" download>
+          <span class="fmt">PPTX</span>
+          <span><span class="t">Best for presenting</span><br />
+            <span class="d">PowerPoint, Keynote or Google Slides. 16:9, one slide per page.</span></span>
+          <span class="sz">5.5 MB</span></a></li>
+
+        <li><a class="dl" href="ECG-Heart-Visualizer-Project-Review.html" download>
+          <span class="fmt">HTML</span>
+          <span><span class="t">Interactive version</span><br />
+            <span class="d">One self-contained file with a live trace and a light theme. Works offline.</span></span>
+          <span class="sz">356 KB</span></a></li>
+      </ul>
+
+      <p class="note">
+        Projecting: set the display to 16:9. In PowerPoint or Keynote press
+        Play; the slides are full&#8209;bleed images, so nothing can reflow on an
+        unfamiliar machine. The HTML version moves with the arrow keys and goes
+        full screen with F11.
+      </p>
+
+      <footer>
+        Live system: <a href="/">143-198-27-18.nip.io</a><br />
+        Source: <a href="https://github.com/holarxmanuel/ecg-heart-visualizer">github.com/holarxmanuel/ecg-heart-visualizer</a><br />
+        Not a medical device. For education and demonstration only.
+      </footer>
+    </main>
+  </body>
+</html>

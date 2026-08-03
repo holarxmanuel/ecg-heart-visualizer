@@ -35,7 +35,11 @@ const files = walk(DIST);
 const precache = files
   .map((f) => '/' + relative(DIST, f).split('\\').join('/'))
   .filter((p) => /\.(html|js|css|webmanifest|png|svg|woff2?)$/i.test(p))
-  .filter((p) => !p.endsWith('.map') && p !== '/sw.js');
+  .filter((p) => !p.endsWith('.map') && p !== '/sw.js')
+  // The presentation deck is ~8 MB of downloadable files that have nothing to
+  // do with running the app offline. Precaching it would make every first
+  // visit pay for it.
+  .filter((p) => !p.startsWith('/slides/'));
 
 // Always include the root path -- a navigation to "/" must resolve offline,
 // and it is not the same cache key as "/index.html".
