@@ -36,6 +36,11 @@
 	@sw path /sw.js /version.json
 	header @sw Cache-Control "no-cache, no-store, must-revalidate"
 
+	# The deck keeps stable filenames while its contents are replaced, so it
+	# must be revalidated rather than pinned by the browser's own cache.
+	@downloads path /slides/*
+	header @downloads Cache-Control "no-cache, must-revalidate"
+
 	# Hashed asset filenames are content-addressed, so they are safe to pin.
 	@assets path /assets/*
 	header @assets Cache-Control "public, max-age=31536000, immutable"

@@ -64,6 +64,20 @@ function isApiRequest(url) {
   return url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws');
 }
 
+/**
+ * Downloads that must never be answered from cache.
+ *
+ * The presentation deck lives here. Everything else this worker caches is
+ * content-hashed, so a cached copy can never be stale; these files keep the
+ * same names while their contents are replaced, and the cache-first rule below
+ * would therefore pin whoever downloaded them once to that version for good.
+ * That is exactly what happened: a rebuilt deck kept downloading as the old
+ * one. They are also several megabytes of files nobody needs offline.
+ */
+function isDownload(url) {
+  return url.pathname.startsWith('/slides/');
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
@@ -73,8 +87,9 @@ self.addEventListener('fetch', (event) => {
   // Only ever handle our own origin. Anything else is passed straight through.
   if (url.origin !== self.location.origin) return;
 
-  // Live data must never come from a cache.
-  if (isApiRequest(url)) return;
+  // Live data, and downloads whose names outlive their contents, must never
+  // come from a cache.
+  if (isApiRequest(url) || isDownload(url)) return;
 
   // Navigations: network first, fall back to the cached shell when offline.
   if (req.mode === 'navigate') {
