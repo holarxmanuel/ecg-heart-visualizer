@@ -26,6 +26,22 @@ See ../instructions.txt for the copy-paste hardware swap guide.
 # Rate and hardware must agree; a mismatch does not degrade the reading, it
 # scales every interval by the ratio and reports a heart rate that is wrong by
 # that factor.
+#
+# One consequence of 125 Hz worth knowing before blaming the filters for noise:
+# Nyquist is 62.5 Hz, so anything above that folds back into the band and no
+# later filter can remove it, because after folding it is no longer at the
+# frequency it came from. Mains harmonics are the case that matters here:
+#
+#     50 Hz  -> stays at 50.0 Hz -> notched, -72 dB
+#     100 Hz -> folds to 25.0 Hz -> UNTOUCHED, -0.01 dB, mid-band
+#     150 Hz -> folds to 25.0 Hz -> UNTOUCHED
+#
+# The 50 Hz notch cannot help with the 2nd and 3rd harmonics, and the guard
+# below that adds a 2*mains notch is correctly inactive because 100 Hz is above
+# Nyquist here. What protects the signal is the AD8232's own analogue
+# band-limiting ahead of the ADC, not anything in this file. If aliased mains
+# ever becomes visible as ~25 Hz hash on the trace, the fix is to sample faster
+# (which also re-enables the harmonic notch), not to add more digital filtering.
 SAMPLE_RATE = 125
 
 # Arduino Uno R3 ADC characteristics. The AD8232 output pin goes to A0.

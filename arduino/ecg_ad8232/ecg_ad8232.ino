@@ -96,22 +96,29 @@ void setup() {
 #endif
 
   /*
-   * Speed up the ADC.
+   * ADC prescaler: keep the datasheet-accurate one.
    *
-   * The Arduino core leaves the ADC prescaler at 128, giving a 125 kHz ADC
-   * clock and a ~112 us conversion. At 125 Hz the budget is 8000 us, so that
-   * would fit comfortably; the /16 prescaler is kept anyway because a shorter
-   * conversion means less jitter in the sample clock, and jitter shows up as
-   * spurious high-frequency content the notch filter cannot remove. Measured
-   * cost: slightly more sample noise (SD ~32 vs ~26 counts) for a steadier
-   * timebase, which is the right trade when the rate is what we measure.
+   * Prescaler 128 gives a 125 kHz ADC clock and a ~112 us conversion. The
+   * datasheet specifies at most 200 kHz for full 10-bit accuracy, so this is
+   * the fastest setting that still resolves all ten bits.
    *
-   * Prescaler 16 -> 1 MHz ADC clock -> ~14 us conversions. That is above the
-   * 200 kHz the datasheet specifies for full 10-bit accuracy, so we lose a
-   * fraction of a bit of precision. On a signal the AD8232 has already
-   * amplified 1100x that is an excellent trade for a rock-steady sample clock.
+   * This sketch previously used /16 (1 MHz, ~14 us). That was chosen when it
+   * sampled at 1000 Hz, where a conversion is 11% of the 1000 us budget and
+   * the margin genuinely mattered. At 125 Hz the budget is 8000 us and a
+   * conversion is 1.4% of it, so the speed buys nothing.
+   *
+   * It is not a jitter trade either, which is worth stating because that is
+   * the tempting misreading: the loop waits on micros() and only then starts a
+   * conversion, so the conversion time is a constant offset on every sample,
+   * not a variation between them. Sample-clock jitter comes from the pacing
+   * and from Serial blocking, neither of which the prescaler touches.
+   *
+   * What /16 did cost is accuracy: running above the specified 200 kHz loses a
+   * fraction of a bit, measured on this rig as SD ~32 counts against ~26 at
+   * prescaler 128 on the same electrodes. That is roughly 25% more noise for
+   * no benefit at this rate.
    */
-  ADCSRA = (ADCSRA & 0xF8) | 0x04;  // clear prescaler bits, set /16
+  ADCSRA = (ADCSRA & 0xF8) | 0x07;  // clear prescaler bits, set /128 (125 kHz)
 
   nextSampleAt = micros();
 }
