@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any, Literal
@@ -509,7 +510,11 @@ async def canonical_origin(request: Request, call_next):
     request round in a loop.
     """
     host = request.headers.get("host", "")
-    if host.split(":")[0] == config.PUBLIC_IP:
+    # Only redirect when the HTTPS target actually answers. Redirecting to a
+    # certificate that was never issued strands every visitor on a dead
+    # address, which is strictly worse than serving the insecure origin and
+    # letting /api/access explain what is unavailable on it.
+    if host.split(":")[0] == config.PUBLIC_IP and _has_certificate():
         target = f"{config.PUBLIC_ORIGIN}{request.url.path}"
         if request.url.query:
             target += f"?{request.url.query}"
@@ -598,8 +603,27 @@ CADDY_CERT_DIR = Path(
 
 
 def _has_certificate() -> bool:
-    """True once Caddy holds a certificate for the canonical hostname."""
-    return (CADDY_CERT_DIR / config.PUBLIC_HOST / f"{config.PUBLIC_HOST}.crt").is_file()
+    """
+    True once a certificate for the canonical hostname is actually present.
+
+    Deliberately total: any failure means "no certificate", never an exception.
+    The cert lives under another user's home, so a non-root deployment gets
+    PermissionError rather than a clean False, and this is called from a
+    request handler -- an unreadable path must not become a 500.
+
+    ECG_CERT_FILE overrides the location for deployments that terminate TLS
+    somewhere other than Caddy.
+    """
+    override = os.environ.get("ECG_CERT_FILE")
+    path = (
+        Path(override)
+        if override
+        else CADDY_CERT_DIR / config.PUBLIC_HOST / f"{config.PUBLIC_HOST}.crt"
+    )
+    try:
+        return path.is_file()
+    except OSError:
+        return False
 
 
 @app.get("/api/access")

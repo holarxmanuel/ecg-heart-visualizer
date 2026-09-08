@@ -104,8 +104,8 @@ PORT = 8000
 # lets Let's Encrypt issue a real certificate without owning a domain. A
 # secure context is mandatory: Web Serial and service workers both refuse to
 # run on plain http://<ip>.
-PUBLIC_IP = "143.198.27.18"
-PUBLIC_HOST = "143-198-27-18.nip.io"
+PUBLIC_IP = "192.99.245.44"
+PUBLIC_HOST = "192-99-245-44.nip.io"
 PUBLIC_ORIGIN = f"https://{PUBLIC_HOST}"
 
 CORS_ORIGINS = [
