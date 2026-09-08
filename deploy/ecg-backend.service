@@ -22,6 +22,10 @@ User=ubuntu
 WorkingDirectory=/home/ubuntu/ecg-heart-visualizer/backend
 ExecStart=/home/ubuntu/ecg-heart-visualizer/backend/.venv/bin/python run_server.py
 Environment=PYTHONUNBUFFERED=1
+# TLS terminates at nginx, not Caddy, so point the certificate probe at the
+# cert nginx actually serves. Without this the app believes it has no HTTPS
+# address and stops advertising the secure origin.
+Environment=ECG_CERT_FILE=/etc/ssl/ecg/fullchain.pem
 SupplementaryGroups=dialout
 
 Restart=always

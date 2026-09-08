@@ -105,7 +105,7 @@ PORT = 8000
 # secure context is mandatory: Web Serial and service workers both refuse to
 # run on plain http://<ip>.
 PUBLIC_IP = "192.99.245.44"
-PUBLIC_HOST = "192-99-245-44.nip.io"
+PUBLIC_HOST = "ecg.192-99-245-44.nip.io"
 PUBLIC_ORIGIN = f"https://{PUBLIC_HOST}"
 
 CORS_ORIGINS = [
