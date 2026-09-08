@@ -227,6 +227,21 @@ Point any of them at the deployment instead of localhost with
 `ECG_URL=https://ecg.192-99-245-44.nip.io`. `test.mjs` also takes
 `ECG_PUBLIC_URL` for the "hosted origin locks the mode toggle" assertion.
 
+### Diagnosing a noisy capture
+
+```bash
+cd backend
+.venv/bin/python analyze_capture.py path/to/capture.csv
+```
+
+Takes either the bench capture shape or the app's own CSV export. "It looks
+noisy" is not actionable, because the display auto-scales to the signal: a weak
+clean recording and a strong dirty one look alike on screen. This measures the
+R wave against the noise floor in the isoelectric segment between beats, then
+splits the noise into baseline wander, EMG, mains and aliased harmonics,
+because each has a different cause and a different fix. It runs the same filter
+and detector the app runs, so the numbers describe what you are looking at.
+
 `offlineboot.mjs` is the one that catches what the others cannot: it installs
 the app while online, then cold-launches it in standalone mode with **every**
 request to the origin aborted, and asserts it still boots, streams, detects
