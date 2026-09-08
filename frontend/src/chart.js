@@ -15,6 +15,8 @@
  * frame we do one drawImage plus two polylines.
  */
 
+import { SAMPLE_RATE } from './dsp/coeffs.js';
+
 const COLUMNS = 1000; // "1000 points visible", per the spec
 
 export class ECGChart {
@@ -26,7 +28,7 @@ export class ECGChart {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 
-    this.sampleRate = opts.sampleRate || 1000;
+    this._sampleRate = opts.sampleRate || SAMPLE_RATE;
     this.windowSeconds = opts.windowSeconds || 4;
     this.showRaw = true;
     this.showFiltered = true;
@@ -44,10 +46,27 @@ export class ECGChart {
     this.resize();
   }
 
+  /**
+   * The ring buffer is sized from the sample rate, so the rate cannot be a
+   * plain field: assigning one without reallocating leaves the window holding
+   * a different number of seconds than it draws. At 125 Hz into buffers sized
+   * for 1000 that is 32 seconds of trace squeezed into a window labelled 4.
+   */
+  get sampleRate() {
+    return this._sampleRate;
+  }
+
+  set sampleRate(hz) {
+    const next = Number(hz);
+    if (!Number.isFinite(next) || next <= 0 || next === this._sampleRate) return;
+    this._sampleRate = next;
+    this._allocate();
+  }
+
   // -- buffers ------------------------------------------------------------
 
   _allocate() {
-    const capacity = Math.ceil(this.windowSeconds * this.sampleRate);
+    const capacity = Math.ceil(this.windowSeconds * this._sampleRate);
     this.capacity = capacity;
     this.filt = new Float32Array(capacity);
     this.raw = new Float32Array(capacity);

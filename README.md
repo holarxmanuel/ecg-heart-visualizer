@@ -4,9 +4,9 @@ A single-lead ECG monitor whose centrepiece is an **anatomically accurate,
 procedurally generated 3D heart** that contracts on every detected R-peak, in
 sync with synthesised heart sounds, above a scrolling ECG waveform.
 
-**Live:** `http://143.198.27.18:8000` — and an HTTPS address (needed for USB
-sensors and installing) which the app itself links to; see
-[DEPLOYMENT.md](DEPLOYMENT.md).
+**Live:** <https://ecg.192-99-245-44.nip.io> — HTTPS, which is required for USB
+sensors and for installing the app. `http://192.99.245.44:8000` redirects to
+it. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
@@ -32,8 +32,8 @@ sensors and installing) which the app itself links to; see
 
 | | URL | Mode toggle |
 |---|---|---|
-| Hosted (HTTP) | `http://143.198.27.18:8000` | locked Online |
-| Hosted (HTTPS) | see the app's "Get the App" panel | locked Online |
+| Hosted (HTTPS) | `https://ecg.192-99-245-44.nip.io` | locked Online |
+| Hosted (HTTP) | `http://192.99.245.44:8000` | redirects to HTTPS |
 | Installed app | install from the HTTPS address | **Online / Offline** |
 | Local clone | `http://localhost:8000` | **Online / Offline** |
 
@@ -44,7 +44,7 @@ which is why a local clone gets everything with no certificate.
 
 ## Why it's built this way
 
-The whole architecture turns on one idea: **the simulator and the real hardware are two implementations of the same interface**, and both emit the identical thing — raw 10-bit ADC counts at 1000 Hz, in the order `analogRead(A0)` would have produced them.
+The whole architecture turns on one idea: **the simulator and the real hardware are two implementations of the same interface**, and both emit the identical thing — raw 10-bit ADC counts at `config.SAMPLE_RATE` (125 Hz, matching the AD8232 rig), in the order `analogRead(A0)` would have produced them.
 
 ```
                     ┌──────────────────────┐
@@ -175,7 +175,7 @@ Both are pre-rendered once into `AudioBuffer`s via an `OfflineAudioContext`, so 
 Deliberate choices for a modest laptop:
 
 - **Backend** runs ~50× faster than real time (see `selftest.py`) — a few percent of one core
-- **Per-client bounded queues.** A browser that falls behind gets its own frames dropped; the acquisition loop keeps a true 1000 Hz. Without this, TCP backpressure from one slow tab stalls the pump and the UI silently drifts seconds into the past while still looking live — worse than useless on a monitor
+- **Per-client bounded queues.** A browser that falls behind gets its own frames dropped; the acquisition loop keeps a true, unslipped sample clock. Without this, TCP backpressure from one slow tab stalls the pump and the UI silently drifts seconds into the past while still looking live — worse than useless on a monitor
 - **One draw call** for the entire heart, no shadow maps, pixel ratio capped at 1.75
 - **Fixed-size typed-array ring buffers** everywhere. The waveform allocates once; recording is opt-in and costs ~2 MB whether you record for one minute or an hour
 - Render work is skipped entirely when the tab is hidden

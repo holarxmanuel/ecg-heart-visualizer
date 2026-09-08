@@ -1,6 +1,11 @@
 /*
  * ============================================================================
- *  AD8232 Single-Lead ECG  ->  Arduino Uno R3  ->  USB Serial
+ *  AD8232 Single-Lead ECG  ->  Arduino Uno R3 / Nano  ->  USB Serial
+ *
+ *  Wiring and pin names below say "Uno". A Nano is the same ATmega328P with
+ *  the same pin numbers and runs this sketch unmodified; it has been flashed
+ *  and verified on one (FQBN arduino:avr:nano:cpu=atmega328old for boards with
+ *  the old bootloader).
  *  Companion sketch for the Real-Time ECG Heart Visualizer
  * ============================================================================
  *
@@ -48,10 +53,12 @@
  *  ---------------------------------------------------------------------------
  *  BANDWIDTH NOTE
  *  ---------------------------------------------------------------------------
- *  1000 samples/s x up to 7 bytes/line = ~7 kB/s = ~70 kbit/s with framing.
- *  At 115200 baud that is roughly 60% utilisation -- comfortable. Do NOT lower
- *  the baud rate without also lowering SAMPLE_RATE_HZ, or the serial buffer
- *  will overflow and you will silently lose samples.
+ *  125 samples/s x up to 7 bytes/line = ~0.9 kB/s = ~9 kbit/s with framing.
+ *  At 115200 baud that is under 8% utilisation, with a lot of headroom. (At
+ *  the 1000 Hz this sketch originally ran at it was ~60%, which is where the
+ *  warning below comes from.) Do NOT lower the baud rate without also lowering
+ *  SAMPLE_RATE_HZ, or the serial buffer will overflow and you will silently
+ *  lose samples.
  * ============================================================================
  */
 
@@ -92,9 +99,12 @@ void setup() {
    * Speed up the ADC.
    *
    * The Arduino core leaves the ADC prescaler at 128, giving a 125 kHz ADC
-   * clock and a ~112 us conversion. That fits inside a 1000 us budget, but it
-   * leaves little room and adds jitter, and jitter in the sample clock shows up
-   * as spurious high-frequency content that the notch filter cannot remove.
+   * clock and a ~112 us conversion. At 125 Hz the budget is 8000 us, so that
+   * would fit comfortably; the /16 prescaler is kept anyway because a shorter
+   * conversion means less jitter in the sample clock, and jitter shows up as
+   * spurious high-frequency content the notch filter cannot remove. Measured
+   * cost: slightly more sample noise (SD ~32 vs ~26 counts) for a steadier
+   * timebase, which is the right trade when the rate is what we measure.
    *
    * Prescaler 16 -> 1 MHz ADC clock -> ~14 us conversions. That is above the
    * 200 kHz the datasheet specifies for full 10-bit accuracy, so we lose a

@@ -11,17 +11,19 @@ All must always show the same build.
 
 | | URL | Secure context? | Mode toggle |
 |---|---|---|---|
-| Hosted, plain HTTP | `http://143.198.27.18:8000` | no | locked Online |
-| Hosted, HTTPS (tunnel) | see `/api/access` | **yes** | locked Online |
+| Hosted, HTTPS | `https://ecg.192-99-245-44.nip.io` | **yes** | locked Online |
+| Hosted, plain HTTP | `http://192.99.245.44:8000` | no | redirects to the HTTPS one |
 | Installed app | installed from the HTTPS URL | yes | **Online / Offline** |
 | Local clone | `http://localhost:8000` | yes (localhost is exempt) | **Online / Offline** |
 
-Only a secure context can install the app or read a USB sensor. The plain-HTTP
-address works for everything else and links users to the secure one.
+Only a secure context can install the app or read a USB sensor. The bare-IP
+address 308s to the HTTPS one, but only once a certificate actually exists for
+it: redirecting to a certificate that was never issued would strand every
+visitor, so `_has_certificate()` gates the redirect.
 
 | | Web / installed app | Local clone |
 |---|---|---|
-| URL | HTTPS tunnel | `http://localhost:8000` |
+| URL | the HTTPS host above | `http://localhost:8000` |
 | Updates | automatic — new deploy, banner offers reload | banner offers `git pull` + rebuild |
 | Runs | always, under systemd | when you start it |
 | USB sensor | Web Serial, in the user's browser | Web Serial, or the server-side `SerialSource` |
@@ -31,9 +33,9 @@ address works for everything else and links users to the secure one.
 ## Architecture as deployed
 
 ```
-                    ┌──────────────────── the server (143.198.27.18) ────────┐
+                    ┌──────────────────── the server (192.99.245.44) ────────┐
                     │                                                        │
-   browser ──443──▶ │  Caddy ──▶ FastAPI :8000 ──▶ ECGSource ──▶ filter ──▶  │
+   browser ──443──▶ │  nginx ──▶ FastAPI :8000 ──▶ ECGSource ──▶ filter ──▶  │
      │              │  (TLS)     (systemd)         │             detector    │
      │              │                              │                         │
      │              └──────────────────────────────┼─────────────────────────┘
@@ -46,7 +48,9 @@ address works for everything else and links users to the secure one.
 
 The browser carries a full copy of the signal chain (`frontend/src/dsp/`).
 `backend/verify_dsp.py` asserts it is bit-identical to the Python, so offline
-and online can never disagree about a heart rate.
+and online can never disagree about a heart rate. Both are generated from
+`config.SAMPLE_RATE` by `export_dsp.py`, so changing the rate means rerunning
+it and rebuilding, or the browser keeps filtering for the old one.
 
 ---
 
@@ -57,63 +61,64 @@ Two headline features refuse to run outside a **secure context**:
 - **Web Serial** — reading the AD8232 from the user's own USB port
 - **Service workers** — offline operation and installing the app
 
-`http://localhost` is exempt. `http://143.198.27.18:8000` is **not**. There is
-no way to ship those features over plain HTTP on an IP address.
+`http://localhost` is exempt. A bare IP address is **not**. There is no way to
+ship those features over plain HTTP on an IP.
 
-We use **nip.io**: `143-198-27-18.nip.io` resolves to `143.198.27.18`, giving a
-real hostname that Let's Encrypt will issue a certificate for, with no domain
-purchase. Caddy handles issuance and renewal by itself.
+We use **nip.io**: `ecg.192-99-245-44.nip.io` resolves to `192.99.245.44`,
+giving a real hostname that Let's Encrypt will issue a certificate for, with no
+domain purchase.
 
-### What we actually use: a Cloudflare tunnel
+### TLS terminates at nginx, not Caddy
 
-The droplet's host firewall is open, but the **cloud firewall blocks inbound
-80 and 443** (8000 and 22 get through). ACME connects to those exact port
-numbers and neither is configurable, so Let's Encrypt cannot validate no
-matter how Caddy is configured.
+The original deployment used Caddy on its own host. This host already runs
+nginx on 443 for an unrelated project, so the ECG app is a **name-based virtual
+host beside it** rather than a second TLS server competing for the port.
 
-`cloudflared` sidesteps this by dialling **outbound**, so no inbound port is
-needed at all, and TLS terminates on Cloudflare's edge with a certificate
-browsers already trust.
+`deploy/nginx-ecg.conf` is the vhost as deployed, installed at
+`/etc/nginx/sites-enabled/zz-ecg`. Two details in it are not cosmetic:
 
-```bash
-systemctl status ecg-tunnel
-cat /var/lib/ecg-tunnel/url        # the current public HTTPS address
-curl -s localhost:8000/api/access  # what the app itself advertises
-```
+- **The filename sorts last on purpose.** `sites-enabled/*` is included in glob
+  order and the *first* block on a port becomes nginx's implicit
+  `default_server` for it. A name that sorted earlier would silently take over
+  every unmatched HTTPS request to the machine.
+- **`/ws/` sets the upgrade headers and turns buffering off.** A buffered
+  WebSocket batches the trace into bursts, which the app's own latency meter
+  then reports as lag.
 
-**Caveat:** a free quick tunnel gets a **random hostname that changes every
-time it restarts**. That is fine for trying things out, but poor for an
-installed app, whose identity is its origin — a changed hostname means the
-installed copy points at a dead URL and its cached data is orphaned.
-
-For a stable address, either open the ports (below) or run a *named* tunnel
-against a free Cloudflare account with a domain.
-
-### Alternative: open ports 80 and 443
-
-Caddy is still installed and configured for `143-198-27-18.nip.io`, and will
-obtain a certificate by itself the moment the ports open.
-
-DigitalOcean → **Networking → Firewalls** → add inbound rules:
-
-| Type | Protocol | Port | Sources |
-|---|---|---|---|
-| HTTP | TCP | 80 | All IPv4, All IPv6 |
-| HTTPS | TCP | 443 | All IPv4, All IPv6 |
-
-Port 80 is needed for the ACME HTTP-01 challenge *and* for renewals — do not
-close it after issuance.
-
-Then:
+The certificate is issued by acme.sh over the HTTP-01 webroot at
+`/var/www/acme`, installed to `/etc/ssl/ecg/`, and renewed by the existing
+acme.sh cron, which reloads nginx on renewal.
 
 ```bash
-sudo systemctl restart caddy
-journalctl -u caddy -f          # watch for "certificate obtained successfully"
-curl -I https://143-198-27-18.nip.io/api/health
+curl -s https://ecg.192-99-245-44.nip.io/api/access   # what the app advertises
+openssl x509 -in /etc/ssl/ecg/fullchain.pem -noout -dates
+sudo nginx -t && sudo systemctl reload nginx          # never restart: reload
 ```
 
-Caddy retries on its own, so this may already have happened by the time you
-look. Once it works, that hostname is stable and the tunnel becomes optional.
+**Caveat:** the hostname encodes the server's IP. If the VPS IP ever changes,
+the hostname changes with it, and an installed app's identity *is* its origin —
+existing installs would point at a dead URL with orphaned cached data. A real
+domain removes that coupling; it is a two-line change (`PUBLIC_HOST` in
+`backend/config.py`, `server_name` in the vhost) plus a reissue.
+
+---
+
+## What a guest PC needs
+
+The app is meant to be installed by someone who did not build it, so the
+dependency list matters.
+
+| | Required | Notes |
+|---|---|---|
+| Browser | **Chrome or Edge, desktop** | Web Serial only. Firefox and Safari do not implement it, and there is no iOS support at all. |
+| USB driver | usually none | Genuine Arduino (ATmega16U2) and FTDI boards auto-provision on Windows. **CH340/CH341 clones need a manual driver install** and will otherwise not enumerate a COM port. |
+| Network | only for the first load | Once installed, a cold launch with no network at all boots, streams and detects locally. Verified, not assumed: `harness/offlineboot.mjs`. |
+| Python | **no** | Only ever a diagnostic tool on the bench. Nothing user-facing needs it. |
+
+The service worker deliberately never caches `/api`, so nothing at boot may
+depend on a successful API call. `boot()` calls `api.config()` inside a
+`try/catch` and falls back to the local engine, and the offline suite asserts
+that path rather than trusting it.
 
 ---
 
@@ -158,16 +163,22 @@ send fails — so anything that trusts `readyState` will wait forever.
 Both are systemd units, enabled at boot, restarting on any failure.
 
 ```bash
-systemctl status ecg-backend     # FastAPI + 1 kHz acquisition
-systemctl status caddy           # TLS termination
+systemctl status ecg-backend     # FastAPI + acquisition at config.SAMPLE_RATE
+systemctl status nginx           # TLS termination
 
 journalctl -u ecg-backend -f
-journalctl -u caddy -f
+journalctl -u nginx -f
 
 sudo systemctl restart ecg-backend
+sudo systemctl reload nginx      # reload, so live connections are not dropped
 ```
 
-Unit files live in `deploy/` and are copied to `/etc/systemd/system/`.
+The backend unit lives in `deploy/` and is copied to `/etc/systemd/system/`.
+nginx is shared with another project on this host: only ever add a vhost, and
+never restart it when a reload will do.
+
+The backend comes up **idle**, with no source selected, until the UI picks one.
+That is deliberate, not a fault: the source is a user choice.
 
 ### After changing backend code
 
@@ -205,9 +216,22 @@ cd backend
 .venv/bin/python verify_dsp.py    # browser DSP == server DSP, bit-exact
 .venv/bin/python smoketest.py     # the assembled live service
 
-cd ../../ecg-harness
-node test.mjs                     # 42 browser checks incl. offline + PWA
+cd ../harness
+npm install                       # first time only
+node test.mjs                     # 80 browser checks incl. offline + PWA
+node extra.mjs                    # 57 checks: routes, CSV export, layout
+node offlineboot.mjs              # 13 checks: installed app, no network at all
 ```
+
+Point any of them at the deployment instead of localhost with
+`ECG_URL=https://ecg.192-99-245-44.nip.io`. `test.mjs` also takes
+`ECG_PUBLIC_URL` for the "hosted origin locks the mode toggle" assertion.
+
+`offlineboot.mjs` is the one that catches what the others cannot: it installs
+the app while online, then cold-launches it in standalone mode with **every**
+request to the origin aborted, and asserts it still boots, streams, detects
+beats and draws on the right timebase. That failure mode passes every online
+test and fails for the first real guest.
 
 ---
 

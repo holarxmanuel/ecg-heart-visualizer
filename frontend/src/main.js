@@ -1339,7 +1339,7 @@ function hideBoot() {
 }
 
 async function boot() {
-  chart = new ECGChart(dom.ecgCanvas, { windowSeconds: 4, sampleRate: 1000 });
+  chart = new ECGChart(dom.ecgCanvas, { windowSeconds: 4, sampleRate: SAMPLE_RATE });
   audio = new HeartAudio();
   // Seeded from the generated DSP constant rather than a literal, so the
   // exported CSV's time base follows the configured sample rate. onHello
