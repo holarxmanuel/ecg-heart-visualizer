@@ -2,13 +2,15 @@
 Live smoke test against a RUNNING server.
 
 `selftest.py` proves the signal chain in isolation. This proves the assembled
-service: that the pipeline pump actually runs at 1000 Hz in real time, that the
+service: that the pipeline pump actually runs at the configured rate in real
+time, that the
 simulator and detector agree, and that the source swap works over HTTP.
 
     .venv/bin/python run_server.py &
     .venv/bin/python smoketest.py
 
-Uses only the standard library, so it can run anywhere the server can.
+Uses only the standard library plus the project's own config, so it can run
+anywhere the server can.
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+import config
 
 BASE = "http://127.0.0.1:8000"
 
@@ -59,7 +63,11 @@ def main() -> int:
     check("Server reachable", health.get("ok") is True, health.get("version", ""))
 
     cfg = call("/api/config")
-    check("Config exposes sample rate", cfg.get("fs") == 1000, f"{cfg.get('fs')} Hz")
+    # Assert the API agrees with the configuration, not a literal: the point
+    # is that the browser is told the same rate the pipeline runs at, whatever
+    # that rate is. A hardcoded number here just fails on every rate change.
+    check("Config exposes sample rate", cfg.get("fs") == config.SAMPLE_RATE,
+          f"{cfg.get('fs')} Hz, config says {config.SAMPLE_RATE} Hz")
     check("Config exposes ADC constants",
           cfg.get("adc_max") == 1023, str(cfg.get("adc_max")))
 

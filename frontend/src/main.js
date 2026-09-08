@@ -21,6 +21,7 @@ import { Link, LinkMode } from './link.js';
 import { ModeManager, AppMode } from './mode.js';
 import { UpdateManager, UpdateKind } from './updates.js';
 import { WebSerialSensor, webSerialUnavailableReason } from './webserial.js';
+import { SAMPLE_RATE } from './dsp/coeffs.js';
 
 // ---------------------------------------------------------------------------
 // DOM
@@ -950,6 +951,13 @@ function onBatch(msg) {
 function onHello(msg) {
   state.serverConfig = msg;
   chart.sampleRate = msg.fs;
+  // The recorder writes time_s as index / sampleRate, so a stale rate here
+  // silently scales every timestamp in the exported CSV and the r_peak column
+  // reads as a wildly wrong heart rate. Never move it mid-capture: that would
+  // corrupt the timebase of the recording already in progress.
+  if (recorder && !recorder.recording && typeof msg.fs === 'number') {
+    recorder.sampleRate = msg.fs;
+  }
   dom.filterInfo.textContent = `0.5–40 Hz · ${msg.mains_hz} Hz notch · ${msg.fs} Hz`;
 
   // Seed the controls from the server's actual state. The server owns these
@@ -1333,7 +1341,10 @@ function hideBoot() {
 async function boot() {
   chart = new ECGChart(dom.ecgCanvas, { windowSeconds: 4, sampleRate: 1000 });
   audio = new HeartAudio();
-  recorder = new Recorder(1000, 300);
+  // Seeded from the generated DSP constant rather than a literal, so the
+  // exported CSV's time base follows the configured sample rate. onHello
+  // corrects it to whatever the server actually reports.
+  recorder = new Recorder(SAMPLE_RATE, 300);
 
   // ?quality=low|medium|high overrides the auto-detected level. Useful for
   // troubleshooting on weak hardware, and for pinning the level in tests.

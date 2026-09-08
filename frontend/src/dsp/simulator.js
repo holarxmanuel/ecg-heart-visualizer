@@ -195,7 +195,12 @@ export class SimulatedSource {
     let jitter = 1.0 + this._gauss() * 0.025;
     jitter = Math.min(Math.max(jitter, 0.9), 1.1);
     const rrSeconds = (60.0 / this.bpm) * jitter;
-    const n = Math.max(Math.round(rrSeconds * fs), 60);
+    // The template length IS the beat period, so this floor must never bind
+    // inside the supported rate range: a floor longer than the RR interval
+    // does not shorten the beat, it pins the simulated rate at the floor. At
+    // 1000 Hz a 60-sample floor is 1000 BPM and unreachable; at 125 Hz it is
+    // 125 BPM, which capped the simulator mid-slider. Guard degeneracy only.
+    const n = Math.max(Math.round(rrSeconds * fs), 2);
 
     const periodMs = rrSeconds * 1000.0;
     const rIndexMs = (Math.floor(0.3 * n) / fs) * 1000.0;

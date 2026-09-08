@@ -62,10 +62,25 @@ def run_case(bpm: float, noise: float, seconds: float = 20.0) -> dict:
     expected_beats = (seconds - 2.0) * bpm / 60.0
     err = abs(measured - bpm)
 
-    # Pass criteria: rate within 2 BPM, and beat count within 8% of expected
-    # (which catches both missed beats and double-counted T waves).
+    # Pass criteria: rate within tolerance, and beat count within 8% of
+    # expected (which catches both missed beats and double-counted T waves).
+    #
+    # The tolerance cannot be a flat 2 BPM at every sample rate. An RR interval
+    # is measured in whole samples, so one sample of quantisation is worth
+    # bpm^2 / (60 * fs) BPM, and that grows with the square of the rate: at
+    # 1000 Hz it is 0.5 BPM at 180 BPM and irrelevant, but at 125 Hz it is
+    # 4.3 BPM, and demanding 2 BPM there asks for precision the sample rate
+    # cannot express. The estimator is a median of whole-sample RR intervals,
+    # so it can only ever return 60*fs/k for integer k: at 180 BPM and 125 Hz
+    # the only achievable readings either side are 178.57 and 182.93, and RR
+    # jitter decides which one the median lands on. Allow one full quantum, or
+    # 2 BPM, whichever is larger, so this measures the detector rather than the
+    # timebase. At 1000 Hz the quantum is under 0.6 BPM across the whole range,
+    # so this leaves the original tolerance in force exactly as before.
+    quantum = (bpm * bpm) / (60.0 * fs)
+    tolerance = max(2.0, quantum)
     count_ratio = len(warm) / expected_beats
-    ok = err <= 2.0 and 0.92 <= count_ratio <= 1.08
+    ok = err <= tolerance and 0.92 <= count_ratio <= 1.08
 
     return {
         "bpm_set": bpm,

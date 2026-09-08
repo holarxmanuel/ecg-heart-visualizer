@@ -15,8 +15,18 @@ See ../instructions.txt for the copy-paste hardware swap guide.
 # ---------------------------------------------------------------------------
 
 # Samples per second. The Arduino sketch paces analogRead() to this exact rate.
-# If you change it here, change SAMPLE_RATE_HZ in the .ino sketch to match.
-SAMPLE_RATE = 1000
+# If you change it here, change SAMPLE_RATE_HZ in the .ino sketch to match,
+# and re-run export_dsp.py, or the browser's filter coefficients will still be
+# designed for the old rate and offline mode will disagree with the server.
+#
+# 125 Hz is what the AD8232 rig actually delivers. Above Nyquist-safety this is
+# a real trade: 125 Hz resolves a QRS complex well enough to time R-peaks (the
+# detector band tops out at 15 Hz) but it is below the 250-500 Hz a diagnostic
+# recorder would use, so fine morphology is coarser than the display suggests.
+# Rate and hardware must agree; a mismatch does not degrade the reading, it
+# scales every interval by the ratio and reports a heart rate that is wrong by
+# that factor.
+SAMPLE_RATE = 125
 
 # Arduino Uno R3 ADC characteristics. The AD8232 output pin goes to A0.
 ADC_BITS = 10  # analogRead() returns 0..1023

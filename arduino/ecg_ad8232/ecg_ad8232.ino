@@ -57,7 +57,7 @@
 
 // ---- configuration ---------------------------------------------------------
 
-const uint16_t SAMPLE_RATE_HZ = 1000;   // must match SAMPLE_RATE in config.py
+const uint16_t SAMPLE_RATE_HZ = 125;    // must match SAMPLE_RATE in config.py
 const uint32_t BAUD           = 115200; // must match SERIAL_BAUD in config.py
 
 const uint8_t PIN_ECG   = A0;

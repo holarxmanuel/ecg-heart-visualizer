@@ -167,7 +167,9 @@ async function main() {
     n: window.__ecg.recorder.count ?? window.__ecg.recorder.n ?? 0,
     info: document.getElementById('record-info')?.textContent.trim(),
   }));
-  check('recording accumulates samples', grew.n > 5000, `${grew.n} samples — "${grew.info}"`);
+  const fsForRec = await page.evaluate(async () => (await (await fetch('/api/config')).json()).fs);
+  check('recording accumulates samples', grew.n > fsForRec * 8,
+        `${grew.n} samples in ~12 s at ${fsForRec} Hz — "${grew.info}"`);
 
   await page.click('#btn-record');  // stop
   await sleep(800);
@@ -192,7 +194,9 @@ async function main() {
     check('filename is descriptive', /^ecg-.*\.csv$/.test(files[0]), files[0]);
     check('CSV has the documented header', header === 'time_s,raw_adc,raw_volts,filtered_mv,r_peak', header);
     check('CSV carries metadata comments', text.includes('# mean_bpm'), lines[0]);
-    check('CSV has a full session of rows', rows.length > 5000, `${rows.length} rows, ${(text.length / 1e6).toFixed(2)} MB`);
+    const fsCfg = await page.evaluate(async () => (await (await fetch('/api/config')).json()).fs);
+    check('CSV has a full session of rows', rows.length > fsCfg * 10,
+          `${rows.length} rows at ${fsCfg} Hz, ${(text.length / 1e6).toFixed(2)} MB`);
 
     const cols = rows.map((r) => r.split(','));
     const adc = cols.map((c) => Number(c[1]));
@@ -203,7 +207,8 @@ async function main() {
     for (let i = 1; i < t.length; i++) if (t[i] <= t[i - 1]) { monotonic = false; break; }
     check('time column is strictly increasing', monotonic, `${t[0]} .. ${t[t.length - 1]} s`);
     const dt = t[1] - t[0];
-    check('sample period matches the configured rate', Math.abs(1 / dt - 1000) < 1, `${(1 / dt).toFixed(1)} Hz`);
+    check('sample period matches the configured rate', Math.abs(1 / dt - fsCfg) < 1,
+          `${(1 / dt).toFixed(1)} Hz, server says ${fsCfg} Hz`);
     const peaks = cols.filter((c) => c[4].trim() === '1').length;
     const dur = t[t.length - 1] - t[0];
     const csvBpm = (peaks / dur) * 60;

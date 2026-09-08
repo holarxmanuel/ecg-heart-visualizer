@@ -79,6 +79,13 @@ async function main() {
   console.log('-'.repeat(74));
 
   await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+  // Sample-count thresholds below are really durations. Read the configured
+  // rate once and scale them, so the suite is valid at any sample rate.
+  const FS = await page.evaluate(async () => {
+    try { return (await (await fetch('/api/config')).json()).fs; } catch { return 1000; }
+  });
+  const secs = (n) => Math.round(n * FS);
   await page.waitForFunction('window.__ecg !== undefined', { timeout: 90000, polling: 500 });
   check('app boots and exposes __ecg', true);
 
@@ -125,7 +132,7 @@ async function main() {
     });
   });
 
-  await page.waitForFunction('window.__ecg.state.samples > 3000', {
+  await page.waitForFunction(`window.__ecg.state.samples > ${secs(3)}`, {
     timeout: 30000,
     polling: 300,
   });
@@ -168,7 +175,7 @@ async function main() {
   const localMode = await page.evaluate(() => window.__ecg.linkState.mode);
   check('link switched to local', localMode === 'local', localMode);
 
-  await page.waitForFunction(`window.__ecg.state.samples > ${before + 3000}`, {
+  await page.waitForFunction(`window.__ecg.state.samples > ${before + secs(3)}`, {
     timeout: 30000,
     polling: 300,
   });
@@ -251,7 +258,7 @@ async function main() {
       window.__ecg.heart.enabled = false;
     });
     // With no server, boot() falls back to the local engine by itself.
-    await page.waitForFunction('window.__ecg.state.samples > 2000', {
+    await page.waitForFunction(`window.__ecg.state.samples > ${secs(2)}`, {
       timeout: 40000,
       polling: 300,
     });
@@ -478,7 +485,7 @@ async function main() {
 
   const iBefore = await installedPage.evaluate(() => window.__ecg.engine.samplesTotal);
   await installedPage.waitForFunction(
-    `window.__ecg.engine.samplesTotal > ${iBefore + 2000}`,
+    `window.__ecg.engine.samplesTotal > ${iBefore + secs(2)}`,
     { timeout: 30000, polling: 300 }
   );
   check('local engine streaming in chosen offline mode', true);

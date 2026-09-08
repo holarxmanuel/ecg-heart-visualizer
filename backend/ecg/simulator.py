@@ -181,7 +181,13 @@ class SimulatedSource(ECGSource):
         jitter = 1.0 + self._rng.normal(0.0, 0.025)
         jitter = float(np.clip(jitter, 0.9, 1.1))
         rr_seconds = (60.0 / self.bpm) * jitter
-        n = max(int(round(rr_seconds * fs)), 60)
+        # The template length IS the beat period, so this floor must never bind
+        # inside the supported rate range: a floor longer than the RR interval
+        # does not shorten the beat, it pins the simulated rate at the floor and
+        # renders the waves against a period the array cannot hold. At 1000 Hz
+        # a 60-sample floor is 1000 BPM and is unreachable, but at 125 Hz it is
+        # 125 BPM, which capped the simulator mid-slider. Guard degeneracy only.
+        n = max(int(round(rr_seconds * fs)), 2)
 
         t_ms = (np.arange(n, dtype=np.float64) / fs) * 1000.0
         r_index_ms = t_ms[int(0.30 * n)]
