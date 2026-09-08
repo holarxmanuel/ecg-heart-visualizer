@@ -721,8 +721,9 @@ async function main() {
     window.__ecg.heart.enabled = true;
   });
   await sleep(3000);
-  await page.screenshot({ path: '/root/ecg-harness/dashboard.png' });
-  console.log('\n  screenshot -> /root/ecg-harness/dashboard.png');
+  const shotPath = process.env.ECG_SHOT || new URL('dashboard.png', import.meta.url).pathname;
+  await page.screenshot({ path: shotPath });
+  console.log(`\n  screenshot -> ${shotPath}`);
 
   await browser.close();
 

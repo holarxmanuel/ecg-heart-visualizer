@@ -18,10 +18,11 @@ Wants=network-online.target
 
 [Service]
 Type=exec
-User=root
-WorkingDirectory=/root/ecg-heart-visualizer/backend
-ExecStart=/root/ecg-heart-visualizer/backend/.venv/bin/python run_server.py
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ecg-heart-visualizer/backend
+ExecStart=/home/ubuntu/ecg-heart-visualizer/backend/.venv/bin/python run_server.py
 Environment=PYTHONUNBUFFERED=1
+SupplementaryGroups=dialout
 
 Restart=always
 RestartSec=3
