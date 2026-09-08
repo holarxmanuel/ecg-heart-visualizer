@@ -229,7 +229,7 @@ function renderStatus(s) {
   if (s.mode === 'connected') {
     dom.footerSource.textContent = `AD8232 hardware · ${s.port} @ ${s.baud} baud · ${s.sample_rate} Hz`;
   } else if (s.mode === 'simulating') {
-    dom.footerSource.textContent = `Simulated AD8232 · Arduino Uno R3 · ${s.sample_rate} Hz`;
+    dom.footerSource.textContent = `Simulated AD8232 · Arduino Uno R3 / Nano · ${s.sample_rate} Hz`;
   }
 
   if (s.extra?.measured_rate_hz) {
