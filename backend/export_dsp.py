@@ -22,6 +22,8 @@ Run after changing any filter constant in config.py:
 
 from __future__ import annotations
 
+import re
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -45,7 +47,8 @@ def _fmt1(arr: np.ndarray) -> str:
     return "[" + ", ".join(repr(float(v)) for v in np.ravel(arr)) + "]"
 
 
-def main() -> None:
+def render() -> str:
+    """The full contents of coeffs.js for the current config."""
     ecg = ECGFilter()
     qrs = BandpassFilter(*config.QRS_BANDPASS, sample_rate=config.SAMPLE_RATE)
 
@@ -87,12 +90,70 @@ export const ECG_ZI = {_fmt(ecg_zi)};
 export const QRS_SOS = {_fmt(qrs.sos)};
 export const QRS_ZI = {_fmt(qrs_zi)};
 '''
+    return text
+
+
+#: How far a regenerated coefficient may sit from the committed one before it
+#: counts as stale. Filter design runs through LAPACK, whose last bit depends
+#: on the CPU and the BLAS kernels it dispatches to, so the same pinned scipy
+#: legitimately yields answers a unit or two in the last place apart on
+#: different machines. An exact text diff therefore fails on hardware
+#: differences rather than on real drift -- which is what it did in CI, on a
+#: file that had not changed. This is loose enough to absorb that and many
+#: orders of magnitude tighter than any change to a filter constant, which
+#: moves coefficients in the first significant digits, not the sixteenth.
+CHECK_RTOL = 1e-9
+
+_NUMBER = re.compile(r"-?\d+\.?\d*(?:[eE][+-]?\d+)?")
+
+
+def check() -> int:
+    """Compare the committed coeffs.js against a fresh render. 0 if in sync."""
+    fresh = render()
+    if not OUT.is_file():
+        print(f"{OUT} is missing. Run: python export_dsp.py")
+        return 1
+    have = OUT.read_text(encoding="utf-8")
+
+    # Structure is compared exactly, values numerically. Blanking the numbers
+    # first means a renamed export or a changed section count is still caught.
+    if _NUMBER.sub("#", have) != _NUMBER.sub("#", fresh):
+        print("coeffs.js does not match export_dsp.py structurally.")
+        print("Run: cd backend && .venv/bin/python export_dsp.py")
+        return 1
+
+    a = [float(m) for m in _NUMBER.findall(have)]
+    b = [float(m) for m in _NUMBER.findall(fresh)]
+    if len(a) != len(b):
+        print(f"coeffs.js has {len(a)} numbers, expected {len(b)}. Regenerate it.")
+        return 1
+
+    worst, where = 0.0, -1
+    for i, (x, y) in enumerate(zip(a, b)):
+        scale = max(abs(x), abs(y), 1e-300)
+        rel = abs(x - y) / scale
+        if rel > worst:
+            worst, where = rel, i
+    if worst > CHECK_RTOL:
+        print(f"coeffs.js is stale: value {where} differs by {worst:.3e} "
+              f"({a[where]!r} vs {b[where]!r}), tolerance {CHECK_RTOL:.0e}.")
+        print("Run: cd backend && .venv/bin/python export_dsp.py")
+        return 1
+
+    print(f"coeffs.js is in sync with config.py "
+          f"(largest relative difference {worst:.3e}, tolerance {CHECK_RTOL:.0e})")
+    return 0
+
+
+def main() -> int:
+    if "--check" in sys.argv:
+        return check()
+    text = render()
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(text, encoding="utf-8")
     print(f"wrote {OUT}")
-    print(f"  ECG chain : {ecg.sos.shape[0]} sections")
-    print(f"  QRS chain : {qrs.sos.shape[0]} sections")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

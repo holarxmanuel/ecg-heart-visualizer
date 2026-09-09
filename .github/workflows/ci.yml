@@ -43,15 +43,16 @@ jobs:
         working-directory: backend
         run: .venv/bin/python verify_dsp.py
 
+      # Compares numerically, not with `git diff`. Filter design runs through
+      # LAPACK, whose last bit depends on the CPU and the BLAS kernels it
+      # dispatches to, so the same pinned scipy legitimately differs by a unit
+      # or two in the last place between this runner and a developer's machine.
+      # The old exact diff failed on that, on a file nobody had touched, while
+      # a real change to a filter constant moves coefficients in the FIRST
+      # significant digits. See CHECK_RTOL in export_dsp.py.
       - name: Coefficients are in sync with config.py
         working-directory: backend
-        run: |
-          .venv/bin/python export_dsp.py
-          if ! git diff --quiet -- ../frontend/src/dsp/coeffs.js; then
-            echo "::error::coeffs.js is stale. Run: cd backend && python export_dsp.py"
-            git diff -- ../frontend/src/dsp/coeffs.js
-            exit 1
-          fi
+        run: .venv/bin/python export_dsp.py --check
 
   frontend:
     name: Frontend build
