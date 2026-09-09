@@ -10,6 +10,12 @@
  * keeps animation and audio locked to each other and inside the 150 ms budget.
  */
 
+// Tells the boot watchdog in index.html that the bundle actually executed.
+// Without this the watchdog cannot tell "the script never loaded" from "the
+// script is loading slowly on a weak device", and those need opposite
+// responses: repair versus wait.
+window.__ecgScriptStarted = true;
+
 import './style.css';
 
 import { ECGChart } from './chart.js';

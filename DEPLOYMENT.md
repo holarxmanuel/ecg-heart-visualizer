@@ -229,7 +229,8 @@ cd ../harness
 npm install                       # first time only
 node test.mjs                     # 80 browser checks incl. offline + PWA
 node extra.mjs                    # 57 checks: routes, CSV export, layout
-node offlineboot.mjs              # 13 checks: installed app, no network at all
+node offlineboot.mjs              # 16 checks: no network, and a hanging one
+node repair.mjs                   # 6 checks: a broken install healing itself
 ```
 
 Point any of them at the deployment instead of localhost with
@@ -250,6 +251,13 @@ R wave against the noise floor in the isoelectric segment between beats, then
 splits the noise into baseline wander, EMG, mains and aliased harmonics,
 because each has a different cause and a different fix. It runs the same filter
 and detector the app runs, so the numbers describe what you are looking at.
+
+`repair.mjs` covers the failure with no other safety net. If the module bundle
+does not load, the shell renders and no JavaScript runs, so the page cannot be
+told anything and cannot fix itself: it sits on "Generating cardiac anatomy"
+through every reopen. The inline watchdog in `index.html` is the only code that
+still runs in that state, which is why it is inline and why it may not be moved
+into the bundle it exists to rescue.
 
 `offlineboot.mjs` is the one that catches what the others cannot: it installs
 the app while online, then cold-launches it in standalone mode with **every**

@@ -413,5 +413,70 @@
     </div>
 
     <script type="module" src="/src/main.js"></script>
+
+    <!--
+      Boot watchdog.
+
+      Inline on purpose: this is the one script guaranteed to run whenever the
+      HTML renders at all, so it is the only thing that can help when the
+      module bundle is the part that failed. A page stuck on the boot overlay
+      with no JavaScript cannot repair itself, and offline it cannot be told to
+      either -- which is exactly how this failed in the field: the shell
+      painted "Generating cardiac anatomy" and nothing else ever happened.
+
+      A stale service worker can serve an index.html whose hashed asset names
+      it does not hold. The assets 404, the module never executes, and the
+      install stays broken through every reopen, including offline, because
+      the fix ships inside the very bundle that will not load. Clearing the
+      caches and unregistering the worker is the only way out, and it has to
+      be driven from here.
+    -->
+    <script>
+      (function () {
+        var GRACE_MS = 12000;
+        function repaired() {
+          try { return sessionStorage.getItem('ecg.repaired') === '1'; } catch (e) { return false; }
+        }
+        function markRepaired() {
+          try { sessionStorage.setItem('ecg.repaired', '1'); } catch (e) {}
+        }
+        async function wipe() {
+          try {
+            var regs = await navigator.serviceWorker.getRegistrations();
+            await Promise.all(regs.map(function (r) { return r.unregister(); }));
+          } catch (e) {}
+          try {
+            var keys = await caches.keys();
+            await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+          } catch (e) {}
+        }
+        function offerManualRepair() {
+          var el = document.getElementById('boot-status');
+          if (!el) return;
+          el.innerHTML =
+            'This copy did not finish downloading.<br>' +
+            'Reconnect to the internet once, then press Repair.' +
+            '<br><button id="ecg-repair" style="margin-top:12px;padding:8px 16px;' +
+            'border-radius:8px;border:1px solid #30363d;background:#161b22;color:#e6edf3;' +
+            'font:inherit;cursor:pointer">Repair and reload</button>';
+          var btn = document.getElementById('ecg-repair');
+          if (btn) btn.onclick = async function () {
+            btn.textContent = 'Repairing…';
+            await wipe();
+            location.reload();
+          };
+        }
+        setTimeout(function () {
+          if (window.__ecgScriptStarted) return;   // running, just slow
+          // One silent self-heal, then hand it to the user. Reloading in a loop
+          // would be worse than saying plainly that it is broken.
+          if (repaired()) return offerManualRepair();
+          markRepaired();
+          var el = document.getElementById('boot-status');
+          if (el) el.textContent = 'Recovering a damaged install…';
+          wipe().then(function () { location.reload(); });
+        }, GRACE_MS);
+      })();
+    </script>
   </body>
 </html>
