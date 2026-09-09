@@ -109,6 +109,46 @@ if (booted) {
   await page.screenshot({ path: 'out/offline-cold-boot.png' });
 }
 
+// ---- 3. the network that hangs instead of failing ----------------------
+// A laptop still associated with a wifi network that has no route out does not
+// reject a fetch, it stalls until a TCP timeout. That is a different code path
+// from a hard offline, and the one that leaves a half-drawn shell on screen.
+console.log('\nReopened on a network that hangs rather than fails');
+console.log('-'.repeat(74));
+const hangPage = await browser.newPage();
+await hangPage.evaluateOnNewDocument(() => {
+  const real = window.matchMedia.bind(window);
+  window.matchMedia = (q) =>
+    q.includes('display-mode: standalone')
+      ? { matches:true, media:q, addEventListener(){}, removeEventListener(){}, addListener(){}, removeListener(){} }
+      : real(q);
+});
+await hangPage.setRequestInterception(true);
+hangPage.on('request', (r) => {
+  // Never answer, never fail: exactly what a dead gateway does.
+  if (r.url().startsWith(BASE)) return;
+  if (/^https?:/.test(r.url())) return r.abort('internetdisconnected');
+  r.continue();
+});
+const t0 = Date.now();
+let hangBooted = true, hangErr = '';
+try {
+  await hangPage.goto(BASE, { waitUntil:'domcontentloaded', timeout:30000 });
+  await hangPage.waitForFunction('window.__ecg !== undefined', { timeout:30000, polling:250 });
+} catch (e) { hangBooted = false; hangErr = String(e).split('\n')[0].slice(0,70); }
+const hangMs = Date.now() - t0;
+check('boots even when the network hangs instead of failing', hangBooted, hangErr || `${hangMs} ms`);
+check('falls back promptly rather than waiting on a dead socket', hangMs < 20000, `${hangMs} ms`);
+if (hangBooted) {
+  await hangPage.waitForFunction('window.__ecg.state.samples > 100', { timeout:30000, polling:250 }).catch(() => {});
+  const hangLive = await hangPage.evaluate(() => ({
+    samples: window.__ecg.state.samples,
+    chartFs: window.__ecg.chart.sampleRate,
+  }));
+  check('streams locally on a hanging network', hangLive.samples > 100, `${hangLive.samples} samples`);
+}
+await hangPage.screenshot({ path: 'out/offline-hanging-network.png' });
+
 await browser.close();
 console.log('\n' + '='.repeat(74));
 console.log(`  ${pass} passed, ${fail} failed`);

@@ -155,11 +155,39 @@ export class ECGConnection extends EventTarget {
 // REST control surface
 // ---------------------------------------------------------------------------
 
+/**
+ * How long any control call waits before giving up.
+ *
+ * Not optional, and not a nicety. `fetch` has no default timeout, and a
+ * network that hangs is a different failure from one that fails: a machine
+ * still associated with a wifi network that has no route out never rejects,
+ * it stalls until a TCP timeout that can be tens of seconds. boot() awaits
+ * api.config(), so without this the whole launch parks on a half-drawn shell
+ * and the app looks broken -- which is exactly how it looked to the first
+ * person who installed it and then switched their wifi off.
+ *
+ * A hard offline was never the dangerous case: that rejects immediately and
+ * the fallback runs. Only the hang needs a clock.
+ */
+const REQUEST_TIMEOUT_MS = 5000;
+
 async function request(path, options = {}) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  });
+  const { timeoutMs = REQUEST_TIMEOUT_MS, ...init } = options;
+
+  // AbortController rather than AbortSignal.timeout, which is newer than some
+  // of the browsers this has to run on.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      ...init,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   let body = null;
   try {
     body = await res.json();

@@ -60,6 +60,41 @@ self.addEventListener('message', (event) => {
   }
 });
 
+/** How long a navigation waits for the network before using the cached shell. */
+const NAV_TIMEOUT_MS = 2500;
+
+/**
+ * Reject if `promise` has not settled in `ms`.
+ *
+ * Deliberately not AbortController: aborting the fetch would also cancel a
+ * response that was nearly there, and letting it finish costs nothing once we
+ * have stopped waiting on it.
+ */
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+  ]);
+}
+
+/**
+ * Last resort when even the shell is not cached: a real page, not a bare
+ * string. Someone who installed the app and went offline before the worker
+ * finished caching gets an explanation and a retry rather than a blank frame.
+ */
+const OFFLINE_HTML = `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ECG Heart Visualizer</title><style>
+body{margin:0;height:100vh;display:grid;place-items:center;background:#0b0f14;
+color:#e6edf3;font:14px/1.6 system-ui,sans-serif;text-align:center;padding:24px}
+h1{font-size:16px;letter-spacing:.08em;text-transform:uppercase;color:#ff4d6d}
+button{margin-top:16px;padding:10px 18px;border-radius:8px;border:1px solid #30363d;
+background:#161b22;color:#e6edf3;font:inherit;cursor:pointer}
+</style></head><body><div><h1>ECG Heart Visualizer</h1>
+<p>This copy is not fully downloaded yet, so it cannot start offline.<br>
+Reconnect once and reopen the app; after that it works with no connection.</p>
+<button onclick="location.reload()">Try again</button></div></body></html>`;
+
 function isApiRequest(url) {
   return url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws');
 }
@@ -91,20 +126,36 @@ self.addEventListener('fetch', (event) => {
   // come from a cache.
   if (isApiRequest(url) || isDownload(url)) return;
 
-  // Navigations: network first, fall back to the cached shell when offline.
+  // Navigations: network first, fall back to the cached shell.
+  //
+  // Two things here are load-bearing and both were learned the hard way.
+  //
+  // The fetch is raced against a timeout. "Offline" is not always a fast
+  // failure: a laptop still associated with a wifi network that has no route
+  // out does not reject, it hangs until a TCP timeout, and a bare `await
+  // fetch` therefore stalls the whole launch for tens of seconds. The user
+  // sees a half-drawn shell and concludes the app is broken. A cached shell
+  // now beats a fresh one later, so anything slower than the timeout loses.
+  //
+  // The fresh copy is NOT written back into this cache. index.html is the only
+  // file here that is not content-hashed, so a newer one names asset files
+  // this cache does not contain -- and then the offline fallback serves an
+  // index that requests assets that 404, which renders as a page that loads
+  // "partly". The precached index and the precached assets are one matched
+  // set, and they must stay that way. A newer build gets its own cache, via
+  // its own worker, atomically.
   if (req.mode === 'navigate') {
     event.respondWith(
       (async () => {
+        const cache = await caches.open(CACHE);
+        const cached = await cache.match('/index.html');
         try {
-          const fresh = await fetch(req);
-          const cache = await caches.open(CACHE);
-          cache.put('/index.html', fresh.clone());
+          const fresh = await withTimeout(fetch(req), NAV_TIMEOUT_MS);
           return fresh;
         } catch {
-          const cached = await caches.match('/index.html');
-          return cached ?? new Response('Offline and no cached copy available.', {
-            status: 503,
-            headers: { 'Content-Type': 'text/plain' },
+          return cached ?? new Response(OFFLINE_HTML, {
+            status: 200,
+            headers: { 'Content-Type': 'text/html; charset=utf-8' },
           });
         }
       })()

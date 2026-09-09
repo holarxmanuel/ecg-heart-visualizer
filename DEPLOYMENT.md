@@ -84,6 +84,15 @@ host beside it** rather than a second TLS server competing for the port.
 - **`/ws/` sets the upgrade headers and turns buffering off.** A buffered
   WebSocket batches the trace into bursts, which the app's own latency meter
   then reports as lag.
+- **The `Cache-Control` rules are ported from the old `deploy/Caddyfile`.**
+  They were lost in the move off Caddy, and their absence is not cosmetic.
+  `/sw.js` and `/version.json` are `no-store`, because a browser that pins
+  itself to an old service worker is the one PWA failure that cannot be fixed
+  remotely. `index.html` is `no-cache`: it is the only file the app ships that
+  is not content-hashed, and `vite build` empties `dist/`, so a stale index
+  names asset files that are gone from the server and the page renders
+  partly. `/assets/*` is `immutable` for a year, which is safe precisely
+  because those names are content-addressed.
 
 The certificate is issued by acme.sh over the HTTP-01 webroot at
 `/var/www/acme`, installed to `/etc/ssl/ecg/`, and renewed by the existing
