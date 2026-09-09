@@ -120,7 +120,7 @@ dependency list matters.
 | | Required | Notes |
 |---|---|---|
 | Browser | **Chrome or Edge, desktop** | Web Serial only. Firefox and Safari do not implement it, and there is no iOS support at all. |
-| USB driver | usually none | Genuine Arduino (ATmega16U2) and FTDI boards auto-provision on Windows. **CH340/CH341 clones need a manual driver install** and will otherwise not enumerate a COM port. |
+| USB driver | usually none | Genuine Arduino (ATmega16U2) and FTDI boards auto-provision on Windows. **CH340/CH341 clones need a manual driver install** and will otherwise not enumerate a COM port. The app raises this itself on first launch: see below. |
 | Network | only for the first load | Once installed, a cold launch with no network at all boots, streams and detects locally. Verified, not assumed: `harness/offlineboot.mjs`. |
 | Python | **no** | Only ever a diagnostic tool on the bench. Nothing user-facing needs it. |
 
@@ -231,11 +231,35 @@ node test.mjs                     # 80 browser checks incl. offline + PWA
 node extra.mjs                    # 57 checks: routes, CSV export, layout
 node offlineboot.mjs              # 16 checks: no network, and a hanging one
 node repair.mjs                   # 6 checks: a broken install healing itself
+node driver.mjs                   # 10 checks: the USB driver setup flow
 ```
 
 Point any of them at the deployment instead of localhost with
 `ECG_URL=https://ecg.192-99-245-44.nip.io`. `test.mjs` also takes
 `ECG_PUBLIC_URL` for the "hosted origin locks the mode toggle" assertion.
+
+### The USB driver, and what the app can honestly do about it
+
+A CH340 board with no driver is indistinguishable from a broken one: the board
+powers up, its LED is on, and the browser's port picker is simply empty. So the
+app raises it before the user hits it. On the first launch of an **installed**
+app with no port yet granted, it offers a setup panel with the correct download
+for the user's platform, and afterwards confirms by name what it is talking to
+("Detected CH340 (WCH)"). It is reachable any time from the Signal Source panel.
+
+Three limits are worth stating plainly, because they are not things better code
+would fix:
+
+- **It cannot install the driver.** No browser API can install a system driver,
+  and that restriction is exactly what stops a web page changing a machine.
+  The panel links to the chip maker's own installer.
+- **It cannot detect a driver silently.** Web Serial only exposes ports the
+  user has explicitly granted, so a working machine with nothing granted looks
+  identical to one with no driver. Confirming requires one click through the
+  browser's picker, which is what "Check my board" asks for.
+- **An empty picker is ambiguous.** The browser reports "user cancelled" and
+  "nothing to offer" the same way, so the panel leads with the driver
+  explanation and mentions the other.
 
 ### Diagnosing a noisy capture
 

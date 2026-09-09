@@ -24,6 +24,91 @@
 
 const DEFAULT_BAUD = 115200;
 
+/**
+ * USB-serial bridges an Arduino-class board is likely to be behind, and
+ * whether Windows can talk to one without being given a driver first.
+ *
+ * This exists because "no COM port" and "no driver" look identical to a user:
+ * the board is plugged in, its power LED is on, and the browser's port picker
+ * is empty. Naming the chip turns that dead end into an instruction.
+ *
+ * `needsDriver` is about Windows specifically. Linux has ch341, cp210x and
+ * ftdi_sio in-kernel, and recent macOS carries CH34x itself, so on those the
+ * answer is almost always "just plug it in".
+ */
+export const USB_CHIPS = {
+  '1a86:7523': { name: 'CH340', vendor: 'WCH', needsDriver: true },
+  '1a86:7522': { name: 'CH340', vendor: 'WCH', needsDriver: true },
+  '1a86:5523': { name: 'CH341', vendor: 'WCH', needsDriver: true },
+  '1a86:55d4': { name: 'CH9102', vendor: 'WCH', needsDriver: true },
+  '0403:6001': { name: 'FT232R', vendor: 'FTDI', needsDriver: false },
+  '0403:6015': { name: 'FT231X', vendor: 'FTDI', needsDriver: false },
+  '10c4:ea60': { name: 'CP2102', vendor: 'Silicon Labs', needsDriver: false },
+  '2341:0043': { name: 'Uno R3', vendor: 'Arduino', needsDriver: false },
+  '2341:0001': { name: 'Uno', vendor: 'Arduino', needsDriver: false },
+  '2341:0243': { name: 'Uno R3', vendor: 'Arduino', needsDriver: false },
+  '2a03:0043': { name: 'Uno R3', vendor: 'Arduino.org', needsDriver: false },
+};
+
+/** The official driver download, per platform. Null means none is needed. */
+export function driverInfo() {
+  const ua = navigator.userAgent || '';
+  if (/Windows/i.test(ua)) {
+    return {
+      platform: 'Windows',
+      url: 'https://www.wch-ic.com/downloads/CH341SER_EXE.html',
+      label: 'CH340 driver for Windows (WCH, official)',
+      note: 'Run the installer, click Install, then unplug and replug the board.',
+    };
+  }
+  if (/Mac OS X|Macintosh/i.test(ua)) {
+    return {
+      platform: 'macOS',
+      url: 'https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html',
+      label: 'CH340 driver for macOS (WCH, official)',
+      note: 'Recent macOS already includes this driver. Only install it if the board does not appear.',
+    };
+  }
+  return {
+    platform: /Linux|X11/i.test(ua) ? 'Linux' : 'this system',
+    url: null,
+    label: null,
+    note: 'The ch341 driver is part of the Linux kernel, so no download is needed. If the port is missing, add yourself to the dialout group and replug.',
+  };
+}
+
+/** "CH340 (WCH)" rather than "USB 1a86:7523". */
+export function describeUsbDevice(vid, pid) {
+  if (vid == null) return { key: null, name: 'USB serial device', known: false, needsDriver: null };
+  const key = `${vid.toString(16).padStart(4, '0')}:${(pid ?? 0).toString(16).padStart(4, '0')}`;
+  const chip = USB_CHIPS[key];
+  return chip
+    ? { key, name: `${chip.name} (${chip.vendor})`, known: true, needsDriver: chip.needsDriver }
+    : { key, name: `USB ${key}`, known: false, needsDriver: null };
+}
+
+/**
+ * Ports the user has already granted, described.
+ *
+ * Note what this cannot do: the Web Serial security model only exposes ports
+ * the user has explicitly picked, so a machine with a perfectly working driver
+ * and nothing yet granted looks exactly like a machine with no driver. There
+ * is no silent probe, by design. Confirming a fresh setup therefore needs one
+ * click through the browser's picker, which is what the setup panel asks for.
+ */
+export async function probeGrantedDevices() {
+  if (!isWebSerialSupported()) return [];
+  try {
+    const ports = await navigator.serial.getPorts();
+    return ports.map((p) => {
+      const i = p.getInfo?.() || {};
+      return { port: p, ...describeUsbDevice(i.usbVendorId, i.usbProductId) };
+    });
+  } catch {
+    return [];
+  }
+}
+
 export function isWebSerialSupported() {
   return typeof navigator !== 'undefined' && 'serial' in navigator;
 }
@@ -111,9 +196,7 @@ export class WebSerialSensor extends EventTarget {
     try {
       const i = this.port?.getInfo?.();
       if (i?.usbVendorId != null) {
-        const vid = i.usbVendorId.toString(16).padStart(4, '0');
-        const pid = (i.usbProductId ?? 0).toString(16).padStart(4, '0');
-        label = `USB ${vid}:${pid}`;
+        label = describeUsbDevice(i.usbVendorId, i.usbProductId).name;
       }
     } catch {
       /* getInfo is best-effort */

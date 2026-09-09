@@ -26,7 +26,13 @@ import { api } from './net.js';
 import { Link, LinkMode } from './link.js';
 import { ModeManager, AppMode } from './mode.js';
 import { UpdateManager, UpdateKind } from './updates.js';
-import { WebSerialSensor, webSerialUnavailableReason } from './webserial.js';
+import {
+  WebSerialSensor,
+  webSerialUnavailableReason,
+  driverInfo,
+  describeUsbDevice,
+  probeGrantedDevices,
+} from './webserial.js';
 import { SAMPLE_RATE } from './dsp/coeffs.js';
 
 // ---------------------------------------------------------------------------
@@ -50,6 +56,15 @@ const dom = {
   btnAudio: $('btn-audio'),
   audioIcon: $('audio-icon'),
   btnUsb: $('btn-usb'),
+  btnDriverSetup: $('btn-driver-setup'),
+  driverModal: $('driver-modal'),
+  driverClose: $('driver-close'),
+  driverCheck: $('driver-check'),
+  driverResult: $('driver-result'),
+  driverDownload: $('driver-download'),
+  driverPlatformNote: $('driver-platform-note'),
+  driverStepDownload: $('driver-step-download'),
+  driverDismiss: $('driver-dismiss'),
   btnInstall: $('btn-install'),
 
   linkPill: $('link-pill'),
@@ -1162,6 +1177,14 @@ function bindControls() {
     }
   });
 
+  dom.btnDriverSetup?.addEventListener('click', openDriverSetup);
+  dom.driverClose?.addEventListener('click', closeDriverSetup);
+  dom.driverCheck?.addEventListener('click', runDriverCheck);
+  dom.driverModal?.addEventListener('click', (e) => {
+    // Click the backdrop to dismiss, but not a click inside the panel.
+    if (e.target === dom.driverModal) closeDriverSetup();
+  });
+
   dom.btnAudio.addEventListener('click', async () => {
     if (!state.audioArmed) {
       const ok = await armAudio();
@@ -1338,6 +1361,115 @@ function rebuildHeart(quality) {
   heart.resize();
 }
 
+/* ---------------------------------------------------------------------------
+ * USB driver setup
+ *
+ * A CH340 board with no driver is indistinguishable from a broken one: the
+ * board powers up, and the browser's port picker is simply empty. Nothing in
+ * the app can detect that state on its own, because Web Serial deliberately
+ * exposes only ports the user has already granted -- so a working machine with
+ * nothing granted yet looks the same as a machine with no driver at all.
+ *
+ * What the app can do is say so up front, hand over the right download, and
+ * then confirm by name what it ends up talking to. That last part is the
+ * valuable half: "CH340 (WCH) detected" is proof, where "it should work now"
+ * is a guess.
+ * ------------------------------------------------------------------------ */
+
+const DRIVER_SEEN_KEY = 'ecg.driverSetupSeen';
+
+function driverSetupSuppressed() {
+  try {
+    return localStorage.getItem(DRIVER_SEEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function openDriverSetup() {
+  const info = driverInfo();
+  dom.driverPlatformNote.textContent = info.note;
+  if (info.url) {
+    dom.driverDownload.href = info.url;
+    dom.driverDownload.textContent = info.label;
+    dom.driverStepDownload.classList.remove('hidden');
+  } else {
+    // Linux needs nothing, so offering a download would be misleading.
+    dom.driverDownload.classList.add('hidden');
+  }
+  dom.driverModal.classList.remove('hidden');
+  dom.driverModal.classList.add('flex');
+  // If a board was granted in an earlier session, say so immediately rather
+  // than making the user press Check to be told what the app already knows.
+  probeGrantedDevices().then((devs) => {
+    if (devs.length) showDriverResult(true, devs[0]);
+  });
+}
+
+function closeDriverSetup() {
+  dom.driverModal.classList.add('hidden');
+  dom.driverModal.classList.remove('flex');
+  try {
+    if (dom.driverDismiss.checked) localStorage.setItem(DRIVER_SEEN_KEY, '1');
+  } catch {
+    /* private mode: the panel simply offers itself again next time */
+  }
+}
+
+function showDriverResult(ok, device, message) {
+  const el = dom.driverResult;
+  el.classList.remove('hidden');
+  if (ok) {
+    el.className =
+      'mt-3 rounded-lg border border-trace-ecg/40 bg-trace-ecg/10 p-3 text-xs leading-relaxed text-slate-200';
+    const named = device?.known ? `<b>${device.name}</b>` : `a serial device (${device?.name})`;
+    el.innerHTML =
+      `✓ Detected ${named}. The driver is working and the board is reachable.<br>` +
+      `<span class="text-slate-400">You are good to go: close this and press ` +
+      `<b>USB Sensor</b> to start reading.</span>`;
+  } else {
+    el.className =
+      'mt-3 rounded-lg border border-trace-alert/40 bg-trace-alert/10 p-3 text-xs leading-relaxed text-slate-200';
+    el.innerHTML = message;
+  }
+}
+
+async function runDriverCheck() {
+  dom.driverCheck.disabled = true;
+  dom.driverCheck.textContent = 'Checking…';
+  try {
+    const reason = webSerialUnavailableReason();
+    if (reason) {
+      showDriverResult(false, null, `✕ ${reason}`);
+      return;
+    }
+    // requestPort needs a user gesture and shows the browser's own picker.
+    // There is no way around that, and no silent enumeration to fall back on.
+    const port = await navigator.serial.requestPort();
+    const i = port.getInfo?.() || {};
+    const device = describeUsbDevice(i.usbVendorId, i.usbProductId);
+    showDriverResult(true, device);
+  } catch (err) {
+    // NotFoundError covers both "the user cancelled" and "the picker had
+    // nothing to offer", and the browser does not distinguish them. An empty
+    // picker is the driver symptom, so lead with that and mention the other.
+    const info = driverInfo();
+    const download = info.url
+      ? `<a class="underline" target="_blank" rel="noopener noreferrer" href="${info.url}">Install the ${info.platform} driver</a>, then unplug and replug the board.`
+      : info.note;
+    showDriverResult(
+      false,
+      null,
+      `✕ No board was selected.<br><span class="text-slate-400">If the list was ` +
+        `<b>empty</b>, the driver is missing or the board is not plugged in. ${download}<br>` +
+        `If you closed the picker by mistake, just press Check again.</span>`
+    );
+  } finally {
+    dom.driverCheck.disabled = false;
+    dom.driverCheck.textContent = 'Check my board';
+  }
+}
+
 function hideBoot() {
   dom.boot.style.opacity = '0';
   dom.boot.style.pointerEvents = 'none';
@@ -1438,6 +1570,18 @@ async function boot() {
     lastFrame = t;
     frame(t);
   });
+
+  // First launch of an installed app: the driver is the one thing that has to
+  // be right before any of this works, and the moment someone has just
+  // installed it is the moment they are willing to do setup. Only when
+  // installed -- a browser tab is usually someone looking, not setting up --
+  // and only when nothing has been granted already, which would mean a working
+  // board and nothing to explain.
+  if (modes.installed && !driverSetupSuppressed() && webSerialUnavailableReason() === null) {
+    probeGrantedDevices().then((devs) => {
+      if (devs.length === 0) setTimeout(openDriverSetup, 1200);
+    });
+  }
 
   // Debug/inspection hook. Handy from the devtools console, and it is what the
   // automated browser tests assert against (renderer triangle counts, beat
