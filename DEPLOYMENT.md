@@ -11,8 +11,9 @@ All must always show the same build.
 
 | | URL | Secure context? | Mode toggle |
 |---|---|---|---|
-| Hosted, HTTPS | `https://ecg.192-99-245-44.nip.io` | **yes** | locked Online |
+| Hosted, HTTPS | `https://ecgv.stream` | **yes** | locked Online |
 | Hosted, plain HTTP | `http://192.99.245.44:8000` | no | redirects to the HTTPS one |
+| Old nip.io host | `https://ecg.192-99-245-44.nip.io` | yes | 301s to `ecgv.stream` |
 | Installed app | installed from the HTTPS URL | yes | **Online / Offline** |
 | Local clone | `http://localhost:8000` | yes (localhost is exempt) | **Online / Offline** |
 
@@ -64,9 +65,30 @@ Two headline features refuse to run outside a **secure context**:
 `http://localhost` is exempt. A bare IP address is **not**. There is no way to
 ship those features over plain HTTP on an IP.
 
-We use **nip.io**: `ecg.192-99-245-44.nip.io` resolves to `192.99.245.44`,
-giving a real hostname that Let's Encrypt will issue a certificate for, with no
-domain purchase.
+The canonical origin is **`https://ecgv.stream`**, on Cloudflare DNS with the
+records set to **DNS only**, not proxied. Two reasons: Let's Encrypt validates
+against the origin over HTTP-01, and the app streams a waveform over a
+WebSocket whose round-trip time is displayed on screen, so an extra hop is a
+number the user can see.
+
+`www` redirects to the apex, and so does the old `ecg.192-99-245-44.nip.io`
+host it replaced. That is not tidiness: **an installed PWA's identity is its
+origin**, so serving the same app on two hostnames creates two apps with two
+separate caches, and whichever one a user happened to install from is the only
+one their data lives in. Exactly one origin serves the app.
+
+A redirect cannot migrate an existing install for the same reason. Anyone who
+installed from the nip.io host has to reinstall from `ecgv.stream`; the
+redirect sends them to the right place but cannot move the installation.
+
+DNS records, for the record:
+
+| Type | Name | Value |
+|---|---|---|
+| A | `@` | `192.99.245.44` |
+| AAAA | `@` | `2607:5300:205:200::7d75` |
+| A | `www` | `192.99.245.44` |
+| AAAA | `www` | `2607:5300:205:200::7d75` |
 
 ### TLS terminates at nginx, not Caddy
 
@@ -74,8 +96,9 @@ The original deployment used Caddy on its own host. This host already runs
 nginx on 443 for an unrelated project, so the ECG app is a **name-based virtual
 host beside it** rather than a second TLS server competing for the port.
 
-`deploy/nginx-ecg.conf` is the vhost as deployed, installed at
-`/etc/nginx/sites-enabled/zz-ecg`. Two details in it are not cosmetic:
+`deploy/nginx-ecgv-stream.conf` is the vhost as deployed, installed at
+`/etc/nginx/sites-enabled/zz-ecgv-stream`, and
+`deploy/nginx-nipio-redirect.conf` is the old host's forwarder. Two details in it are not cosmetic:
 
 - **The filename sorts last on purpose.** `sites-enabled/*` is included in glob
   order and the *first* block on a port becomes nginx's implicit
@@ -99,16 +122,14 @@ The certificate is issued by acme.sh over the HTTP-01 webroot at
 acme.sh cron, which reloads nginx on renewal.
 
 ```bash
-curl -s https://ecg.192-99-245-44.nip.io/api/access   # what the app advertises
-openssl x509 -in /etc/ssl/ecg/fullchain.pem -noout -dates
+curl -s https://ecgv.stream/api/access   # what the app advertises
+openssl x509 -in /etc/ssl/ecgv/fullchain.pem -noout -dates
 sudo nginx -t && sudo systemctl reload nginx          # never restart: reload
 ```
 
-**Caveat:** the hostname encodes the server's IP. If the VPS IP ever changes,
-the hostname changes with it, and an installed app's identity *is* its origin —
-existing installs would point at a dead URL with orphaned cached data. A real
-domain removes that coupling; it is a two-line change (`PUBLIC_HOST` in
-`backend/config.py`, `server_name` in the vhost) plus a reissue.
+The certificate covers both `ecgv.stream` and `www.ecgv.stream`, is installed
+to `/etc/ssl/ecgv/`, and renews on the existing acme.sh cron, which reloads
+nginx on renewal.
 
 ---
 
@@ -235,7 +256,7 @@ node driver.mjs                   # 10 checks: the USB driver setup flow
 ```
 
 Point any of them at the deployment instead of localhost with
-`ECG_URL=https://ecg.192-99-245-44.nip.io`. `test.mjs` also takes
+`ECG_URL=https://ecgv.stream`. `test.mjs` also takes
 `ECG_PUBLIC_URL` for the "hosted origin locks the mode toggle" assertion.
 
 ### The USB driver, and what the app can honestly do about it

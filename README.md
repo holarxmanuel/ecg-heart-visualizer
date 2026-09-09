@@ -4,9 +4,10 @@ A single-lead ECG monitor whose centrepiece is an **anatomically accurate,
 procedurally generated 3D heart** that contracts on every detected R-peak, in
 sync with synthesised heart sounds, above a scrolling ECG waveform.
 
-**Live:** <https://ecg.192-99-245-44.nip.io> — HTTPS, which is required for USB
-sensors and for installing the app. `http://192.99.245.44:8000` redirects to
-it. See [DEPLOYMENT.md](DEPLOYMENT.md).
+**Live:** <https://ecgv.stream> — HTTPS, which is required for USB sensors and
+for installing the app. `www`, the old nip.io hostname and
+`http://192.99.245.44:8000` all redirect to it, so the app has exactly one
+origin. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
@@ -32,7 +33,7 @@ it. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
 | | URL | Mode toggle |
 |---|---|---|
-| Hosted (HTTPS) | `https://ecg.192-99-245-44.nip.io` | locked Online |
+| Hosted (HTTPS) | `https://ecgv.stream` | locked Online |
 | Hosted (HTTP) | `http://192.99.245.44:8000` | redirects to HTTPS |
 | Installed app | install from the HTTPS address | **Online / Offline** |
 | Local clone | `http://localhost:8000` | **Online / Offline** |

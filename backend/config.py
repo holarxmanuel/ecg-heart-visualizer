@@ -131,11 +131,15 @@ PORT = 8000
 # secure context is mandatory: Web Serial and service workers both refuse to
 # run on plain http://<ip>.
 PUBLIC_IP = "192.99.245.44"
-PUBLIC_HOST = "ecg.192-99-245-44.nip.io"
+PUBLIC_HOST = "ecgv.stream"
 PUBLIC_ORIGIN = f"https://{PUBLIC_HOST}"
 
 CORS_ORIGINS = [
     PUBLIC_ORIGIN,
+    # The nip.io host the app lived on before the domain. Kept only so a stray
+    # request from an older installed copy is not a CORS failure on top of the
+    # redirect it is already following.
+    "https://ecg.192-99-245-44.nip.io",
     f"http://{PUBLIC_IP}:8000",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
