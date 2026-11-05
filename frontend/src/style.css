@@ -238,3 +238,32 @@ canvas {
   pointer-events: none;
   filter: grayscale(0.8);
 }
+
+/* ===================== Android app (see platform.js) ===================== */
+/* No USB port on a phone, no "install" (it is installed), no browser updater. */
+.in-app #btn-usb, .in-app #btn-install, .in-app #btn-serial, .in-app #get-app-panel,
+.in-app #update-banner, .in-app #secure-link { display: none !important; }
+.in-app #btn-sim { grid-column: span 2; }
+/* No blur effects: heavy on budget phones (they made taps lag elsewhere). */
+.in-app *, .in-app *::before, .in-app *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+.in-app a:focus-visible, .in-app button:focus-visible { outline: none; }
+
+.app-update-gate { position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center; padding: 20px; background: #05070b; }
+.update-required body > *:not(.app-update-gate) { visibility: hidden; }
+.app-update-card { width: min(100%, 400px); background: #0d1117; color: #e2e8f0; border: 1px solid #1f2937; border-radius: 22px; padding: 28px 22px 20px; text-align: center; }
+.app-update-card img { border-radius: 18px; margin: 0 auto 12px; }
+.app-update-card h2 { font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+.app-update-card p { color: #94a3b8; font-size: 14px; line-height: 1.5; }
+.app-update-card .upd-btn { margin-top: 16px; padding: 12px; font-size: 16px; }
+.app-update-card .upd-bar { height: 8px; border-radius: 99px; background: #1f2937; overflow: hidden; margin-top: 16px; }
+.app-update-card .upd-bar i { display: block; height: 100%; width: 3%; background: #ef4444; transition: width .25s; }
+.app-update-card .upd-msg { margin-top: 10px; min-height: 1em; }
+.app-update-card .upd-ver { font-size: 12px; margin-top: 10px; }
+
+/* Website, Android visitors: the phone app offer */
+.android-app-bar { position: sticky; top: 0; z-index: 60; display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #0d1117; border-bottom: 1px solid #1f2937; color: #e2e8f0; text-decoration: none; }
+.android-app-bar.hidden { display: none; }
+.android-app-bar img { border-radius: 8px; }
+.android-app-bar span { display: grid; flex: 1; font-size: 13px; line-height: 1.25; }
+.android-app-bar small { color: #94a3b8; font-size: 11.5px; }
+.android-app-bar .android-app-get { flex: none; background: #ef4444; color: #fff; font-weight: 700; padding: 6px 14px; border-radius: 99px; }

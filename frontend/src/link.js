@@ -294,6 +294,24 @@ export class Link extends EventTarget {
   }
 
   /**
+   * The app started with no server reachable while the user wants online:
+   * run locally now, and hand back to the server as soon as it is reachable
+   * (exactly as after losing it mid-session). Without this, an app opened
+   * with no signal stayed on local simulation even once the network returned.
+   */
+  markDegraded() {
+    if (this.userMode === AppMode.OFFLINE) return;
+    this.degraded = true;
+    this._fellBackAutomatically = true;
+    if (this.serverUp && !this.privateSession) {
+      // It came back while the boot was still deciding.
+      this.degraded = false;
+      this.useServer({ automatic: true });
+      this.dispatchEvent(new CustomEvent('restored'));
+    }
+  }
+
+  /**
    * Apply the user's chosen mode.
    *
    * Online with no server is not an error -- it means "prefer the server, run

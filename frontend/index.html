@@ -23,6 +23,13 @@
   </head>
 
   <body class="min-h-screen bg-ink-900 text-slate-200 font-display antialiased overflow-x-hidden">
+    <!-- Shown to visitors on Android phones only (platform.js): the phone app is
+         a separate app that runs the simulator offline. -->
+    <a id="android-app-bar" class="android-app-bar hidden" href="/download/ECGV.apk" download>
+      <img src="/icons/icon-192.png" alt="" width="34" height="34" />
+      <span><b>ECGV for Android</b><small>Live stream and an offline simulator, as an app</small></span>
+      <span class="android-app-get">Get</span>
+    </a>
     <!-- ================= boot overlay ================= -->
     <div
       id="boot"
@@ -315,7 +322,7 @@
           </div>
 
           <!-- audio -->
-          <div class="panel py-3">
+          <div id="get-app-panel" class="panel py-3">
             <span class="panel-label mb-2 block">Get the App</span>
             <p id="install-blurb" class="text-[12px] leading-snug text-slate-400">
               Install to run the ECG entirely on this computer — no connection

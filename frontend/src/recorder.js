@@ -1,3 +1,4 @@
+import { IN_APP, saveTextFile } from './platform.js';
 /**
  * ECG session recorder and CSV export.
  *
@@ -186,12 +187,15 @@ export class Recorder {
       .toISOString()
       .replace(/[:.]/g, '-')
       .slice(0, 19);
+    const name = `ecg-${meta.source || 'session'}-${stamp}.csv`;
+    // In the Android app the file goes to the phone's Downloads.
+    if (IN_APP) return saveTextFile(name, 'text/csv', csv);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
 
     const a = document.createElement('a');
     a.href = url;
-    a.download = `ecg-${meta.source || 'session'}-${stamp}.csv`;
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();

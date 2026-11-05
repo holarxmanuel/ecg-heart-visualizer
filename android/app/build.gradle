@@ -1,0 +1,31 @@
+plugins { id 'com.android.application' }
+
+// The live server this app talks to (its interface is bundled in the APK).
+def HOST = "ecgv.stream"
+
+android {
+    namespace 'stream.ecgv.app'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'stream.ecgv.app'
+        minSdk 24
+        targetSdk 35
+        versionCode 3
+        versionName '1.0.2'
+        buildConfigField 'String', 'HOST', "\"${HOST}\""
+    }
+    buildFeatures { buildConfig true }
+    signingConfigs {
+        release {
+            storeFile file("${System.getProperty('user.home')}/ecgv-signing/ecgv.keystore")
+            storePassword System.getenv('ECGV_KEYSTORE_PASSWORD')
+            keyAlias 'ecgv'
+            keyPassword System.getenv('ECGV_KEYSTORE_PASSWORD')
+        }
+    }
+    buildTypes { release { minifyEnabled false; signingConfig signingConfigs.release } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    // The bundled interface must not be compressed or renamed.
+    androidResources { noCompress += ['js', 'css', 'html', 'json', 'png', 'svg'] }
+}
+dependencies { implementation 'androidx.core:core:1.13.1' }

@@ -37,6 +37,20 @@ origin. See [DEPLOYMENT.md](DEPLOYMENT.md).
 | Hosted (HTTP) | `http://192.99.245.44:8000` | redirects to HTTPS |
 | Installed app | install from the HTTPS address | **Online / Offline** |
 | Local clone | `http://localhost:8000` | **Online / Offline** |
+| Android app | [`ecgv.stream/download/ECGV.apk`](https://ecgv.stream/download/ECGV.apk) | **Online / Offline** |
+
+### The Android app
+
+A separate app for phones, not the installed laptop app. The whole interface
+(simulator, filters, Pan-Tompkins detector, 3D heart) is packed inside the APK
+and served to its WebView at the real `https://ecgv.stream` origin, so it opens
+and simulates with **no network at all, first launch included**, while `/api`
+and the live WebSocket still reach the server when it is online. A phone has no
+USB port to read an AD8232 from, so the USB sensor and Arduino controls are
+hidden; Online shows whatever the server is streaming. It updates itself: a
+newer `android/dist/android.json` blocks the app behind an update screen (only
+when the server is reachable, never offline). Build with `android/build.sh
+[bump]`; see `frontend/src/platform.js` for every place the app differs.
 
 Installing and USB sensors need a secure (https) origin. `localhost` is exempt,
 which is why a local clone gets everything with no certificate.

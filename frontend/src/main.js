@@ -26,6 +26,9 @@ import { api } from './net.js';
 import { Link, LinkMode } from './link.js';
 import { ModeManager, AppMode } from './mode.js';
 import { UpdateManager, UpdateKind } from './updates.js';
+import { IN_APP } from './platform.js';
+import { startAppUpdates } from './app-update.js';
+const UPDATE_SCREEN_UP = () => document.documentElement.classList.contains('update-required');
 import {
   WebSerialSensor,
   webSerialUnavailableReason,
@@ -779,7 +782,10 @@ function wireUpdates() {
     }
   });
 
-  updates.start();
+  // The Android app updates itself as a whole; the browser updater and its
+  // service worker are for the hosted site and the installed laptop app.
+  if (IN_APP) startAppUpdates();
+  else updates.start();
 }
 
 // ---------------------------------------------------------------------------
@@ -1014,6 +1020,9 @@ let fps = 0;
 
 function frame(now) {
   requestAnimationFrame(frame);
+  // The phone app's update screen covers everything: drawing the 3D heart
+  // behind it only costs battery and, on slow phones, makes taps lag.
+  if (UPDATE_SCREEN_UP()) return;
 
   // Hidden tab: rAF is already throttled by the browser, but skipping the work
   // entirely means a backgrounded monitor costs essentially nothing.
@@ -1563,6 +1572,8 @@ async function boot() {
     dom.bootStatus.textContent = 'Server unreachable — using local simulation';
     dom.btnStart.disabled = false;
     link.useLocal('simulate');
+    // Switch to the server by itself once it is reachable (unless the user chose Offline).
+    if (modes.mode === AppMode.ONLINE) link.markDegraded();
     showOfflineBanner('unreachable');
   }
 

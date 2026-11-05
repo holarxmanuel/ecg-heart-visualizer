@@ -33,6 +33,8 @@
  * instant the connection drops, so the trace never stops. Link owns that.
  */
 
+import { IN_APP } from './platform.js';
+
 export const AppMode = {
   ONLINE: 'online',
   OFFLINE: 'offline',
@@ -43,6 +45,8 @@ const STORAGE_KEY = 'ecg.mode';
 /** Running as an installed app rather than in a browser tab. */
 export function isInstalled() {
   return (
+    // The Android app is installed by definition (see platform.js).
+    IN_APP ||
     window.matchMedia?.('(display-mode: standalone)').matches ||
     window.matchMedia?.('(display-mode: window-controls-overlay)').matches ||
     // iOS Safari predates the display-mode media query.
